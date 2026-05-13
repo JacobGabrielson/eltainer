@@ -84,4 +84,4 @@ popup menus. All views derive from `magit-section-mode`.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
