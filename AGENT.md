@@ -137,6 +137,12 @@ emacs --script test/test-docker-ps.el
 emacs --script test/test-docker-images.el
 ```
 
+## Demo recording
+
+Record demos using `asciinema` (install with `brew install asciinema`).
+Use `asciinema rec` to record terminal sessions showing eldocker in
+action. Store recordings in a `demos/` directory (not committed to git).
+
 ## User preferences
 
 - Keep responses concise — the user is an expert Elisp developer.
