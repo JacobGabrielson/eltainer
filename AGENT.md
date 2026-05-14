@@ -58,6 +58,20 @@ dependencies. All parsing, UI rendering, and business logic is pure Elisp.
     - test-docker-images.el — Image listing tests
     - test-docker-compose.el — Compose tests
 
+### Phase 4 — Direct-daemon spike (exploratory)
+
+11. **docker-daemon.el** — Trial: bypass the docker CLI entirely and
+    speak HTTP directly to the daemon over the Unix socket (the
+    emak8s-style approach). Intentionally tiny — implement only
+    `GET /containers/json` so we can compare ergonomics with the
+    CLI-backed code paths. Not wired into the magit view; just an
+    interactive `docker-daemon-ps` that prints container names.
+
+    Constraint relaxation note: this phase deliberately violates the
+    "shell out only to docker products" rule for one file, to see how
+    pure-daemon code feels. If we like it, later phases can graduate
+    more of the surface area onto it.
+
 ### File layout (final)
 
 ```
