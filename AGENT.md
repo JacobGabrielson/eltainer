@@ -97,13 +97,19 @@ test/              — ERT tests against local Docker daemon
 ## Core constraints
 
 - **Pure Elisp only.** Every line of code must be Emacs Lisp.
-- **Shell out ONLY to Docker products** (docker CLI, sbx, etc.).
-  Use `call-process` or `start-process` for docker commands. Never
-  shell out to kubectl, curl, python, or anything else.
-- **No Docker daemon TCP connection directly** — use the docker CLI
-  as the canonical interface. The CLI handles socket connection,
-  TLS, auth, and streaming for us.
-- **Target Emacs 29+.**
+- **Talk to the Docker daemon directly over its HTTP engine API.**
+  No shelling out to the `docker` CLI from production code paths.
+  Transport is `docker-http.el` (Unix socket / TCP / TCP+TLS via
+  built-in GnuTLS).  See `docs/direct-daemon-rewrite.md`.
+- **Native JSON only.** Use `json-parse-string`/`json-parse-buffer`
+  and `json-serialize`; refuse to load on Emacs without them.
+- **The exceptions** (each in a narrowly-scoped, named helper):
+  build & buildx (BuildKit gRPC), `docker compose`, CLI plugins,
+  `docker login` config writes, `DOCKER_HOST=ssh://…` transport,
+  and `docker-credential-*` helper invocations.  Test scaffolding
+  may shell out for sentinel containers — production code never
+  does.
+- **Target Emacs 30+.**
 
 ## Code style
 

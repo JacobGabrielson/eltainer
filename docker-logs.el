@@ -1,50 +1,46 @@
-;;; docker-logs.el --- Container log viewing and tailing -*- lexical-binding: t -*-
+;;; docker-logs.el --- Stream container logs via the engine API -*- lexical-binding: t -*-
 ;;
-;; Stream and view container logs.  A log buffer is associated with a
-;; single container and reuses a single async `docker logs' process.
-;;
-;; Usage:
-;;   (docker-logs cfg "my-container")            ; tail with -f
-;;   (docker-logs cfg "my-container" :tail 200)  ; show last 200 then follow
-;;
-;; M-x docker-logs-at-point in a container view streams the container
-;; at point.
+;; Direct-to-daemon log streaming.  We open
+;; `GET /containers/{id}/logs?follow=1&stdout=1&stderr=1' and run the
+;; bytes through `docker-stream-make-demux' so stdout and stderr land
+;; with distinct faces.  When the daemon attaches a TTY to the
+;; container the response is *not* multiplexed; we detect that via the
+;; container's `Config.Tty' and skip the demuxer.
 
 (require 'cl-lib)
 (require 'docker-api)
-
-;;; ---------------------------------------------------------------------------
-;;; Customization
+(require 'docker-http)
+(require 'docker-stream)
+(require 'docker-ps)
 
 (defcustom docker-logs-default-tail 200
-  "Default number of lines to show when opening a log buffer."
-  :type '(choice (const :tag "All history" nil) integer)
-  :group 'docker-api)
+  "Default number of historical lines to fetch on open."
+  :type '(choice (const :tag "All history" "all") integer)
+  :group 'docker)
 
 (defcustom docker-logs-follow t
-  "Non-nil to stream new log lines as they arrive (docker logs -f)."
+  "When non-nil, follow the log stream as new lines arrive."
   :type 'boolean
-  :group 'docker-api)
+  :group 'docker)
 
 (defcustom docker-logs-timestamps nil
-  "Non-nil to include per-line timestamps."
+  "When non-nil, include per-line timestamps from the daemon."
   :type 'boolean
-  :group 'docker-api)
+  :group 'docker)
 
-;;; ---------------------------------------------------------------------------
-;;; Buffer-local state
+(defface docker-logs-stdout
+  '((t :inherit default))
+  "Face for stdout log bytes."
+  :group 'docker)
 
-(defvar-local docker-logs--container nil
-  "Container name this log buffer is following.")
+(defface docker-logs-stderr
+  '((t :inherit error))
+  "Face for stderr log bytes."
+  :group 'docker)
 
-(defvar-local docker-logs--process nil
-  "The async `docker logs' process for this buffer.")
-
-(defvar-local docker-logs--config nil
-  "`docker-config' used to start this log buffer.")
-
-;;; ---------------------------------------------------------------------------
-;;; Mode
+(defvar-local docker-logs--container nil)
+(defvar-local docker-logs--process nil)
+(defvar-local docker-logs--config nil)
 
 (defvar-keymap docker-logs-mode-map
   "q" #'quit-window
@@ -60,66 +56,73 @@
   (setq-local truncate-lines nil)
   (add-hook 'kill-buffer-hook #'docker-logs--cleanup nil t))
 
-;;; ---------------------------------------------------------------------------
-;;; Process management
-
 (defun docker-logs--buffer-name (container)
-  "Return the canonical log buffer name for CONTAINER."
   (format "*docker:logs:%s*" container))
 
 (defun docker-logs--cleanup ()
-  "Kill any associated log process when the buffer dies."
+  "Kill any associated log stream when the buffer dies."
   (when (process-live-p docker-logs--process)
     (delete-process docker-logs--process)))
 
-(defun docker-logs--insert (proc string)
-  "Process filter: insert STRING from PROC at end of its buffer."
-  (let ((buf (process-buffer proc)))
-    (when (buffer-live-p buf)
-      (with-current-buffer buf
-        (let ((inhibit-read-only t)
-              (at-end (= (point) (point-max))))
-          (save-excursion
-            (goto-char (point-max))
-            (insert string))
-          (when at-end
-            (goto-char (point-max))))))))
+(defun docker-logs--insert (buffer stream-type bytes)
+  "Insert BYTES into BUFFER, colorized by STREAM-TYPE (`stdout'/`stderr')."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t)
+            (at-end (= (point) (point-max)))
+            (face (pcase stream-type
+                    ('stderr 'docker-logs-stderr)
+                    (_ 'docker-logs-stdout))))
+        (save-excursion
+          (goto-char (point-max))
+          (insert (propertize bytes 'font-lock-face face)))
+        (when at-end (goto-char (point-max)))))))
+
+(defun docker-logs--tty-p (cfg container)
+  "Return non-nil if CONTAINER's daemon-side TTY is enabled."
+  (let ((detail (docker-inspect-container-json cfg container)))
+    (eq t (alist-get 'Tty (alist-get 'Config detail)))))
 
 (cl-defun docker-logs-start (cfg container &key tail follow timestamps)
-  "Open a log buffer for CONTAINER and start streaming.
-CFG is a `docker-config'.  TAIL, FOLLOW, TIMESTAMPS default to the
-matching `docker-logs-*' customs.  Returns the buffer."
+  "Open a log buffer for CONTAINER and stream from the engine API.
+TAIL, FOLLOW, TIMESTAMPS default to the matching `docker-logs-*' customs.
+Returns the buffer."
   (let* ((tail (or tail docker-logs-default-tail))
          (follow (if (eq follow 'unset) docker-logs-follow follow))
          (timestamps (if (eq timestamps 'unset) docker-logs-timestamps timestamps))
-         (buf (get-buffer-create (docker-logs--buffer-name container))))
+         (buf (get-buffer-create (docker-logs--buffer-name container)))
+         (tty-p (docker-logs--tty-p cfg container))
+         (demux (unless tty-p
+                  (docker-stream-make-demux
+                   (lambda (typ payload)
+                     (docker-logs--insert buf typ payload))))))
     (with-current-buffer buf
       (docker-logs-mode)
       (setq docker-logs--container container
             docker-logs--config cfg)
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (propertize (format "docker logs %s\n\n" container)
-                            'font-lock-face 'shadow)))
+        (insert (propertize
+                 (format "GET /containers/%s/logs%s%s%s\n\n"
+                         container
+                         (if follow "?follow=1" "?follow=0")
+                         (if timestamps "&timestamps=1" "")
+                         (format "&tail=%s&stdout=1&stderr=1" tail))
+                 'font-lock-face 'shadow)))
       (docker-logs--cleanup)
-      (let* ((args (append (docker--tls-flags cfg)
-                           (list "logs")
-                           (when follow '("--follow"))
-                           (when timestamps '("--timestamps"))
-                           (when tail (list "--tail" (number-to-string tail)))
-                           (list container)))
-             (proc (apply #'start-process
-                          (format "docker-logs-%s" container)
-                          buf
-                          (or docker-cli-path "docker")
-                          args)))
-        (set-process-coding-system proc 'utf-8 'utf-8)
-        (set-process-filter proc #'docker-logs--insert)
-        (setq docker-logs--process proc)))
+      (setq docker-logs--process
+            (docker-http-stream
+             cfg "GET" (format "/containers/%s/logs" container)
+             :query `(("follow" . ,(if follow "1" "0"))
+                      ("stdout" . "1")
+                      ("stderr" . "1")
+                      ("tail" . ,(format "%s" tail))
+                      ,@(when timestamps '(("timestamps" . "1"))))
+             :on-chunk
+             (if demux
+                 (lambda (bytes) (funcall demux bytes))
+               (lambda (bytes) (docker-logs--insert buf 'stdout bytes))))))
     buf))
-
-;;; ---------------------------------------------------------------------------
-;;; Interactive commands
 
 (defun docker-logs-restart ()
   "Restart the log stream in the current buffer."
@@ -139,13 +142,9 @@ matching `docker-logs-*' customs.  Returns the buffer."
 
 ;;;###autoload
 (cl-defun docker-logs (cfg container &key tail (follow 'unset) (timestamps 'unset))
-  "Open a log buffer for CONTAINER streaming via CFG.
-TAIL is the number of historical lines.  FOLLOW and TIMESTAMPS
-override the customs when non-`unset'."
+  "Open a log buffer for CONTAINER and stream via the engine API."
   (let ((buf (docker-logs-start cfg container
-                                :tail tail
-                                :follow follow
-                                :timestamps timestamps)))
+                                :tail tail :follow follow :timestamps timestamps)))
     (pop-to-buffer buf)
     buf))
 

@@ -9,11 +9,18 @@
 
 (defconst eldocker-modules
   '("docker-config"
+    "docker-http"
+    "docker-stream"
     "docker-api"
     "docker-ps"
     "docker-images"
+    "docker-networks"
+    "docker-events"
     "docker-logs"
-    "docker-daemon"
+    "docker-terminal"
+    "docker-exec"
+    "docker-auth"
+    "docker-pull"
     "docker")
   "Eldocker modules in load order (dependencies first).")
 
@@ -22,18 +29,39 @@
   "Directory containing this `reload.el' file (captured at load time).")
 
 (defun eldocker-reload ()
-  "Byte-compile and reload every eldocker module."
+  "Byte-compile and reload every eldocker module.
+Also re-enters the major mode in any live `docker-*-mode' buffer so
+freshly-bound keys land in already-open windows."
   (interactive)
-  (let ((load-path (cons eldocker--source-dir load-path)))
+  (let ((load-path (cons eldocker--source-dir load-path))
+        (errors nil))
     (dolist (mod eldocker-modules)
       (let ((src (expand-file-name (concat mod ".el") eldocker--source-dir)))
         (unless (file-exists-p src)
           (user-error "eldocker-reload: missing %s" src))
-        (byte-compile-file src)
+        (let ((byte-compile-result (byte-compile-file src)))
+          (unless byte-compile-result
+            (push mod errors)))
         (setq features (delq (intern mod) features))
         (load (file-name-sans-extension src) nil 'nomessage)))
-    (message "eldocker-reload: reloaded %d modules"
-             (length eldocker-modules))))
+    ;; Re-enter modes in any existing eldocker buffer so a stale
+    ;; local-map (or any post-mode-init state) gets rebuilt.
+    (let ((rebound 0))
+      (dolist (buf (buffer-list))
+        (with-current-buffer buf
+          (when (and (symbolp major-mode)
+                     (string-prefix-p "docker-" (symbol-name major-mode))
+                     (string-suffix-p "-mode" (symbol-name major-mode))
+                     (fboundp major-mode))
+            (funcall major-mode)
+            (cl-incf rebound))))
+      (message "eldocker-reload: reloaded %d modules, refreshed %d buffer%s%s"
+               (length eldocker-modules)
+               rebound (if (= rebound 1) "" "s")
+               (if errors
+                   (format ", %d compile failure(s): %s"
+                           (length errors) (mapconcat #'identity errors ", "))
+                 "")))))
 
 (provide 'reload)
 ;;; reload.el ends here

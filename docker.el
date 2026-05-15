@@ -15,6 +15,10 @@
 (require 'docker-ps)
 (require 'docker-images)
 (require 'docker-logs)
+(require 'docker-networks)
+(require 'docker-events)
+(require 'docker-exec)
+(require 'docker-pull)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Customization
@@ -55,6 +59,11 @@ Set this to a `docker-config' struct to bypass environment detection."
 (defface docker-image-name
   '((t :inherit magit-tag))
   "Face for image names."
+  :group 'docker)
+
+(defface docker-network-name
+  '((t :inherit magit-branch-remote))
+  "Face for network names."
   :group 'docker)
 
 (defface docker-status-running
@@ -204,49 +213,26 @@ section."
                           'font-lock-face 'docker-dim))
       (insert "\n"))))
 
-(defmacro docker--define-container-view (name docstring api-fn column-header line-fn)
-  "Define a container view named NAME.
-Generates: docker--NAME-refresh, docker-NAME-mode, docker-NAME command.
-API-FN fetches items, COLUMN-HEADER is the header string,
-LINE-FN inserts one item."
-  (let* ((namestr (symbol-name name))
-         (display (capitalize namestr))
-         (refresh-fn (intern (format "docker--%s-refresh" namestr)))
-         (mode-fn (intern (format "docker-%s-mode" namestr)))
-         (mode-map (intern (format "docker-%s-mode-map" namestr)))
-         (cmd-fn (intern (format "docker-%s" namestr)))
-         (buf-name (format "*docker:%s*" namestr)))
-    `(progn
-       (defun ,refresh-fn ()
-         ,(format "Refresh the %s buffer." namestr)
-         (let* ((cfg (docker--ensure-config))
-                (items (funcall ,api-fn cfg)))
-           (docker--generic-refresh ,display items ,column-header ,line-fn)))
+(defvar-local docker-containers--show-all nil
+  "When non-nil, the containers view includes stopped containers.")
 
-       (defvar-keymap ,mode-map
-         :parent magit-section-mode-map)
-       (map-keymap (lambda (key def)
-                     (keymap-set ,mode-map (key-description (vector key)) def))
-                   docker-common-map)
+(defun docker--containers-refresh ()
+  "Refresh the containers buffer using the buffer-local `--show-all' flag."
+  (let* ((cfg (docker--ensure-config))
+         (items (docker-list-containers cfg :all docker-containers--show-all))
+         (hdr (format "  %-30s %-10s %-10s %-12s %-6s\n"
+                      "NAME" "STATE" "IMAGE" "PORTS" "AGE"))
+         (label (if docker-containers--show-all
+                    "Containers (all)" "Containers (running)")))
+    (docker--generic-refresh label items hdr #'docker--container-insert-line)))
 
-       (define-derived-mode ,mode-fn magit-section-mode
-         ,(format "Docker:%s" (capitalize namestr))
-         ,docstring
-         :interactive nil
-         :group 'docker
-         (setq-local revert-buffer-function
-                     (lambda (_ignore-auto _noconfirm) (,refresh-fn)))
-         (add-hook 'kill-buffer-hook #'docker--cleanup nil t))
-
-       (defun ,cmd-fn ()
-         ,(format "Display %s in the current Docker daemon." namestr)
-         (interactive)
-         (let ((buf (get-buffer-create ,buf-name)))
-           (with-current-buffer buf
-             (,mode-fn)
-             (docker--ensure-config)
-             (,refresh-fn))
-           (pop-to-buffer buf))))))
+(defun docker-containers-toggle-all ()
+  "Toggle between running-only and all-containers in the current view."
+  (interactive)
+  (unless (derived-mode-p 'docker-containers-mode)
+    (user-error "Not in a docker-containers buffer"))
+  (setq docker-containers--show-all (not docker-containers--show-all))
+  (docker--containers-refresh))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Image view
@@ -274,24 +260,42 @@ LINE-FN inserts one item."
 ;;; ---------------------------------------------------------------------------
 ;;; View definitions
 
-(docker--define-container-view containers
-  "Major mode for viewing Docker containers."
-  #'docker-list-containers
-  (format "  %-30s %-10s %-10s %-12s %-6s\n" "NAME" "STATE" "IMAGE" "PORTS" "AGE")
-  #'docker--container-insert-line)
+(defvar-keymap docker-containers-mode-map
+  :parent magit-section-mode-map
+  "a" #'docker-containers-toggle-all
+  "s" #'docker-start-at-point
+  "S" #'docker-stop-at-point
+  "r" #'docker-restart-at-point
+  "K" #'docker-kill-at-point)
+(map-keymap (lambda (key def)
+              (keymap-set docker-containers-mode-map
+                          (key-description (vector key)) def))
+            docker-common-map)
 
-(docker--define-container-view containers-all
-  "Major mode for viewing all Docker containers (including stopped)."
-  (lambda (cfg) (docker-list-containers cfg :all t))
-  (format "  %-30s %-10s %-10s %-12s %-6s\n" "NAME" "STATE" "IMAGE" "PORTS" "AGE")
-  #'docker--container-insert-line)
+(define-derived-mode docker-containers-mode magit-section-mode "Docker:Containers"
+  "Major mode for viewing Docker containers.
 
-;; Container lifecycle keys (live on both container views).
-(dolist (map (list docker-containers-mode-map docker-containers-all-mode-map))
-  (keymap-set map "s" #'docker-start-at-point)
-  (keymap-set map "S" #'docker-stop-at-point)
-  (keymap-set map "r" #'docker-restart-at-point)
-  (keymap-set map "K" #'docker-kill-at-point))
+\\{docker-containers-mode-map}"
+  :interactive nil
+  :group 'docker
+  (setq-local revert-buffer-function
+              (lambda (_ignore-auto _noconfirm) (docker--containers-refresh)))
+  (add-hook 'kill-buffer-hook #'docker--cleanup nil t))
+
+;;;###autoload
+(defun docker-containers ()
+  "Display Docker containers (running by default; `a' toggles to show all)."
+  (interactive)
+  (let ((buf (get-buffer-create "*docker:containers*")))
+    (with-current-buffer buf
+      (docker-containers-mode)
+      (let ((cfg (docker--ensure-config)))
+        (docker--containers-refresh)
+        (docker--subscribe-events
+         cfg
+         (docker-events-match-types "container" "network")
+         #'docker--containers-refresh)))
+    (pop-to-buffer buf)))
 
 (defun docker--images-refresh ()
   "Refresh the images buffer."
@@ -325,9 +329,137 @@ LINE-FN inserts one item."
   (let ((buf (get-buffer-create "*docker:images*")))
     (with-current-buffer buf
       (docker-images-mode)
-      (docker--ensure-config)
-      (docker--images-refresh))
+      (let ((cfg (docker--ensure-config)))
+        (docker--images-refresh)
+        (docker--subscribe-events
+         cfg (docker-events-match-types "image") #'docker--images-refresh)))
     (pop-to-buffer buf)))
+
+;;; ---------------------------------------------------------------------------
+;;; Networks view
+
+(defun docker--network-insert-line (net detail)
+  "Insert a network summary section for NET, expanding members from DETAIL."
+  (let* ((name (docker-network-name net))
+         (driver (docker-network-driver net))
+         (scope (docker-network-scope net))
+         (subnet (and detail (docker-network-detail-subnet detail)))
+         (members (and detail (docker-network-detail-members detail))))
+    (magit-insert-section (network net t)
+      (magit-insert-heading
+        (format "  %-20s %-10s %-8s %-22s %s\n"
+                (propertize name 'font-lock-face 'docker-network-name)
+                (propertize driver 'font-lock-face 'docker-dim)
+                (propertize scope 'font-lock-face 'docker-dim)
+                (propertize (or subnet "-") 'font-lock-face 'docker-dim)
+                (propertize (format "(%d)" (length members))
+                            'font-lock-face 'docker-dim)))
+      (dolist (m members)
+        (magit-insert-section (network-member m)
+          (insert (format "    %-30s  %s\n"
+                          (propertize (or (docker-network-member-container-name m) "?")
+                                      'font-lock-face 'docker-container-name)
+                          (propertize (or (docker-network-member-ipv4 m) "")
+                                      'font-lock-face 'docker-dim)))))
+      (insert "\n"))))
+
+(defun docker--networks-refresh ()
+  "Refresh the networks buffer."
+  (let* ((cfg (docker--ensure-config))
+         (networks (docker-list-networks cfg))
+         (names (mapcar #'docker-network-name (append networks nil)))
+         (details (docker-inspect-networks cfg names))
+         (by-name (let ((h (make-hash-table :test 'equal)))
+                    (dolist (d details)
+                      (puthash (docker-network-detail-name d) d h))
+                    h))
+         (hdr (format "  %-20s %-10s %-8s %-22s %s\n"
+                      "NAME" "DRIVER" "SCOPE" "SUBNET" "MEMBERS")))
+    (docker--generic-refresh "Networks" networks hdr
+                             (lambda (net)
+                               (docker--network-insert-line
+                                net (gethash (docker-network-name net) by-name))))))
+
+(defvar-keymap docker-networks-mode-map
+  :parent magit-section-mode-map)
+(map-keymap (lambda (key def)
+              (keymap-set docker-networks-mode-map
+                          (key-description (vector key)) def))
+            docker-common-map)
+
+(define-derived-mode docker-networks-mode magit-section-mode "Docker:Networks"
+  "Major mode for viewing Docker networks.
+
+\\{docker-networks-mode-map}"
+  :interactive nil
+  :group 'docker
+  (setq-local revert-buffer-function
+              (lambda (_ignore-auto _noconfirm) (docker--networks-refresh)))
+  (add-hook 'kill-buffer-hook #'docker--cleanup nil t))
+
+;;;###autoload
+(defun docker-networks ()
+  "Display all Docker networks with their connected containers."
+  (interactive)
+  (let ((buf (get-buffer-create "*docker:networks*")))
+    (with-current-buffer buf
+      (docker-networks-mode)
+      (let ((cfg (docker--ensure-config)))
+        (docker--networks-refresh)
+        (docker--subscribe-events
+         cfg (docker-events-match-types "network" "container")
+         #'docker--networks-refresh)))
+    (pop-to-buffer buf)))
+
+;;; ---------------------------------------------------------------------------
+;;; Network connect/disconnect (from a container at point)
+
+(defun docker--read-network (cfg prompt &optional default-names)
+  "Prompt for a network name.  DEFAULT-NAMES restricts the completion set."
+  (let ((names (or default-names
+                   (mapcar #'docker-network-name
+                           (append (docker-list-networks cfg) nil)))))
+    (completing-read prompt names nil t)))
+
+(defun docker--container-networks (cfg name)
+  "Return the list of network names CONTAINER is currently a member of."
+  (let* ((detail (docker-inspect-container cfg name))
+         (nets (cdr (assq 'Networks
+                          (docker-container-detail-network-settings detail)))))
+    (mapcar (lambda (e) (symbol-name (car e))) nets)))
+
+(defun docker-network-connect-at-point ()
+  "Connect the container at point to a network (prompts for the network)."
+  (interactive)
+  (let* ((c (docker--container-at-point))
+         (cname (docker-container-name c))
+         (cfg (docker--ensure-config))
+         (net (docker--read-network cfg (format "Connect %s to network: " cname))))
+    (if (docker-network-connect cfg net cname)
+        (progn (message "eldocker: connected %s to %s" cname net)
+               (revert-buffer))
+      (message "eldocker: connect failed (%s → %s)" cname net))))
+
+(defun docker-network-disconnect-at-point ()
+  "Disconnect the container at point from one of its networks."
+  (interactive)
+  (let* ((c (docker--container-at-point))
+         (cname (docker-container-name c))
+         (cfg (docker--ensure-config))
+         (current (docker--container-networks cfg cname))
+         (_ (unless current (user-error "%s is not on any network" cname)))
+         (net (docker--read-network cfg
+                                    (format "Disconnect %s from network: " cname)
+                                    current)))
+    (if (docker-network-disconnect cfg net cname)
+        (progn (message "eldocker: disconnected %s from %s" cname net)
+               (revert-buffer))
+      (message "eldocker: disconnect failed (%s → %s)" cname net))))
+
+;; Bind in the containers view (j = join, J = jettison).
+(keymap-set docker-containers-mode-map "j" #'docker-network-connect-at-point)
+(keymap-set docker-containers-mode-map "J" #'docker-network-disconnect-at-point)
+(keymap-set docker-containers-mode-map "e" #'docker-exec-at-point)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Transient dispatch
@@ -335,17 +467,24 @@ LINE-FN inserts one item."
 (transient-define-prefix docker-dispatch ()
   "Main eldocker command menu."
   ["Views"
-   ("c" "Containers (running)" docker-containers)
-   ("C" "Containers (all)"     docker-containers-all)
-   ("I" "Images"               docker-images)]
+   ("c" "Containers" docker-containers)
+   ("I" "Images"     docker-images)
+   ("N" "Networks"   docker-networks)]
+  ["Images"
+   ("p" "Pull image" docker-pull-image)]
+  ["Containers view"
+   ("a" "Toggle running/all" docker-containers-toggle-all)]
   ["Container at point"
-   ("s" "Start"   docker-start-at-point)
-   ("S" "Stop"    docker-stop-at-point)
-   ("r" "Restart" docker-restart-at-point)
-   ("K" "Kill"    docker-kill-at-point)
-   ("l" "Logs"    docker-logs-at-point)
-   ("i" "Inspect" docker-inspect-at-point)
-   ("d" "Remove"  docker-delete-at-point)]
+   ("s" "Start"        docker-start-at-point)
+   ("S" "Stop"         docker-stop-at-point)
+   ("r" "Restart"      docker-restart-at-point)
+   ("K" "Kill"         docker-kill-at-point)
+   ("l" "Logs"         docker-logs-at-point)
+   ("e" "Exec"         docker-exec-at-point)
+   ("i" "Inspect"      docker-inspect-at-point)
+   ("d" "Remove"       docker-delete-at-point)
+   ("j" "Join network" docker-network-connect-at-point)
+   ("J" "Leave network" docker-network-disconnect-at-point)]
   ["Buffer"
    ("g" "Refresh" revert-buffer)
    ("q" "Quit"    quit-window)])
@@ -372,9 +511,21 @@ LINE-FN inserts one item."
                    (docker-container-name value))
                   ((docker-image-p value)
                    (docker-image-repository value))
+                  ((docker-network-p value)
+                   (docker-network-name value))
+                  ((docker-network-member-p value)
+                   (docker-network-member-container-name value))
                   (t (user-error "Unknown resource type"))))
            (buf (get-buffer-create (format "*docker:inspect:%s*" name)))
-           (json (docker-inspect cfg name)))
+           (json (cond
+                  ((docker-container-p value)
+                   (docker-inspect-container-json cfg name))
+                  ((docker-image-p value)
+                   (docker-inspect-image cfg name))
+                  ((docker-network-p value)
+                   (docker-inspect-network-json cfg name))
+                  ((docker-network-member-p value)
+                   (docker-inspect-container-json cfg name)))))
       (with-current-buffer buf
         (let ((inhibit-read-only t))
           (erase-buffer)
@@ -416,29 +567,45 @@ LINE-FN inserts one item."
 ;;; Delete resource
 
 (defun docker-delete-at-point ()
-  "Delete the Docker object at point after confirmation."
+  "Delete (or disconnect) the Docker object at point after confirmation.
+Context-aware: containers/images/networks remove; a network-member row
+disconnects the member from its network."
   (interactive)
   (let ((section (magit-current-section)))
     (unless section
       (user-error "Not on a resource"))
     (let* ((value (oref section value))
-           (type (oref section type))
-           (cfg (docker--ensure-config))
-           (name (cond
-                  ((docker-container-p value)
-                   (docker-container-name value))
-                  ((docker-image-p value)
-                   (docker-image-repository value))
-                  (t (user-error "Unknown resource type")))))
-      (when (yes-or-no-p (format "Delete %s %s? " type name))
-        (cond
-         ((docker-container-p value)
-          (docker-remove-container cfg name)
-          (message "eldocker: removed container %s" name))
-         ((docker-image-p value)
-          (docker-remove-image cfg name)
-          (message "eldocker: removed image %s" name)))
-        (revert-buffer)))))
+           (cfg (docker--ensure-config)))
+      (cond
+       ((docker-container-p value)
+        (let ((name (docker-container-name value)))
+          (when (yes-or-no-p (format "Remove container %s? " name))
+            (docker-remove-container cfg name)
+            (message "eldocker: removed container %s" name)
+            (revert-buffer))))
+       ((docker-image-p value)
+        (let ((name (docker-image-repository value)))
+          (when (yes-or-no-p (format "Remove image %s? " name))
+            (docker-remove-image cfg name)
+            (message "eldocker: removed image %s" name)
+            (revert-buffer))))
+       ((docker-network-p value)
+        (let ((name (docker-network-name value)))
+          (when (yes-or-no-p (format "Remove network %s? " name))
+            (if (docker-remove-network cfg name)
+                (progn (message "eldocker: removed network %s" name)
+                       (revert-buffer))
+              (message "eldocker: removing %s failed (containers still attached?)"
+                       name)))))
+       ((docker-network-member-p value)
+        (let ((net (docker-network-member-network-name value))
+              (cname (docker-network-member-container-name value)))
+          (when (yes-or-no-p (format "Disconnect %s from %s? " cname net))
+            (if (docker-network-disconnect cfg net cname)
+                (progn (message "eldocker: disconnected %s from %s" cname net)
+                       (revert-buffer))
+              (message "eldocker: disconnect failed")))))
+       (t (user-error "Unknown resource type"))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Container action helpers
@@ -496,9 +663,12 @@ VERB is the lowercase action word; the generated function is named
 
 (defun docker--cleanup ()
   "Cleanup hook: release resources when a docker buffer is killed."
-  ;; Currently no async resources to clean; reserved for future
-  ;; (processes, timers, etc.)
-  )
+  (docker-events-unsubscribe (current-buffer)))
+
+(defun docker--subscribe-events (cfg match-fn refresh-fn)
+  "Hook the current buffer up to /events for auto-refresh on matching events."
+  (docker-events-start cfg)
+  (docker-events-subscribe (current-buffer) match-fn refresh-fn))
 
 (provide 'docker)
 ;;; docker.el ends here

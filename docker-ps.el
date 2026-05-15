@@ -40,63 +40,60 @@
 ;;; Container listing
 
 (cl-defun docker-list-containers (cfg &key all)
-  "List containers via docker CLI.
+  "List containers via the engine API (GET /containers/json).
 Returns a vector of `docker-container' structs (empty vector when none).
 When ALL is non-nil, include stopped containers."
-  (let* ((args (append '("ps")
-                       (when all '("--all"))
-                       '("--format" "{{json .}}")))
-         (objs (apply #'docker-ndjson-command cfg args)))
+  (let ((data (docker-engine-get cfg "/containers/json"
+                                 :query (when all '(("all" . "1"))))))
     (vconcat
      (mapcar (lambda (j)
                (docker-container--new
-                :id (cdr (assq 'ID j))
-                :image (cdr (assq 'Image j))
-                :command (cdr (assq 'Command j))
-                :created (cdr (assq 'CreatedAt j))
-                :ports (cdr (assq 'Ports j))
-                :status (cdr (assq 'Status j))
-                :state (cdr (assq 'State j))
-                :name (cdr (assq 'Names j))
-                :size (cdr (assq 'Size j))))
-             objs))))
+                :id (alist-get 'Id j)
+                :image (alist-get 'Image j)
+                :command (alist-get 'Command j)
+                :created (docker--epoch-to-iso (alist-get 'Created j))
+                :ports (docker--format-ports (alist-get 'Ports j))
+                :status (alist-get 'Status j)
+                :state (alist-get 'State j)
+                :name (docker--strip-leading-slash
+                       (car (alist-get 'Names j)))
+                :size nil))
+             data))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Container lifecycle
 
 (defun docker-start-container (cfg name)
-  "Start container NAME.  Returns non-nil on success."
-  (let* ((args (append (docker--tls-flags cfg) (list "start" name)))
-         (result (apply #'docker-command args)))
-    (eq (car result) 0)))
+  "Start container NAME via POST /containers/NAME/start."
+  (condition-case _err
+      (progn (docker-engine-post cfg (format "/containers/%s/start" name)) t)
+    (docker-api-error nil)))
 
 (defun docker-stop-container (cfg name)
-  "Stop container NAME.  Returns non-nil on success."
-  (let* ((args (append (docker--tls-flags cfg) (list "stop" name)))
-         (result (apply #'docker-command args)))
-    (eq (car result) 0)))
+  "Stop container NAME via POST /containers/NAME/stop."
+  (condition-case _err
+      (progn (docker-engine-post cfg (format "/containers/%s/stop" name)) t)
+    (docker-api-error nil)))
 
 (defun docker-restart-container (cfg name)
-  "Restart container NAME.  Returns non-nil on success."
-  (let* ((args (append (docker--tls-flags cfg) (list "restart" name)))
-         (result (apply #'docker-command args)))
-    (eq (car result) 0)))
+  "Restart container NAME via POST /containers/NAME/restart."
+  (condition-case _err
+      (progn (docker-engine-post cfg (format "/containers/%s/restart" name)) t)
+    (docker-api-error nil)))
 
 (defun docker-kill-container (cfg name)
-  "Kill (SIGKILL) container NAME.  Returns non-nil on success."
-  (let* ((args (append (docker--tls-flags cfg) (list "kill" name)))
-         (result (apply #'docker-command args)))
-    (eq (car result) 0)))
+  "Send SIGKILL to container NAME via POST /containers/NAME/kill."
+  (condition-case _err
+      (progn (docker-engine-post cfg (format "/containers/%s/kill" name)) t)
+    (docker-api-error nil)))
 
 (defun docker-remove-container (cfg name &optional force)
-  "Remove container NAME.  If FORCE, use --force.
-Returns non-nil on success."
-  (let* ((args (append (docker--tls-flags cfg)
-                       '("rm")
-                       (when force '("--force"))
-                       (list name)))
-         (result (apply #'docker-command args)))
-    (eq (car result) 0)))
+  "Remove container NAME via DELETE /containers/NAME.  FORCE adds force=1."
+  (condition-case _err
+      (progn (docker-engine-delete cfg (format "/containers/%s" name)
+                                   :query (when force '(("force" . "1"))))
+             t)
+    (docker-api-error nil)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Container states
@@ -109,18 +106,26 @@ Returns non-nil on success."
 ;;; Inspect helpers
 
 (defun docker-inspect-container (cfg name)
-  "Inspect container NAME.  Returns `docker-container-detail' or nil."
-  (let ((json (docker-json-command cfg "inspect" name)))
-    (when (and json (vectorp json) (> (length json) 0))
-      (let ((data (aref json 0)))
-        (docker-container-detail--new
-         :id (cdr (assq 'Id data))
-         :name (cdr (assq 'Name data))
-         :image (cdr (assq 'Image data))
-         :state (cdr (assq 'State data))
-         :config (cdr (assq 'Config data))
-         :network-settings (cdr (assq 'NetworkSettings data))
-         :mount-settings (cdr (assq 'Mounts data)))))))
+  "Inspect container NAME via GET /containers/NAME/json.
+Returns a `docker-container-detail' struct, or nil on lookup failure."
+  (let ((data (condition-case nil
+                  (docker-engine-get cfg (format "/containers/%s/json" name))
+                (docker-api-error nil))))
+    (when data
+      (docker-container-detail--new
+       :id (alist-get 'Id data)
+       :name (docker--strip-leading-slash (alist-get 'Name data))
+       :image (alist-get 'Image data)
+       :state (alist-get 'State data)
+       :config (alist-get 'Config data)
+       :network-settings (alist-get 'NetworkSettings data)
+       :mount-settings (alist-get 'Mounts data)))))
+
+(defun docker-inspect-container-json (cfg name)
+  "Return the raw `/containers/NAME/json' alist (for the inspect view)."
+  (condition-case nil
+      (docker-engine-get cfg (format "/containers/%s/json" name))
+    (docker-api-error nil)))
 
 (provide 'docker-ps)
 ;;; docker-ps.el ends here
