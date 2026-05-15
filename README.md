@@ -2,75 +2,84 @@
 
 A pure Emacs Lisp Docker client and magit-style Docker browser.
 
+![eldocker exec demo](docs/exec-demo.gif)
+
+*Pressing `e` on a container row opens a real shell inside it — no
+`docker exec -it` involved, just an HTTP Upgrade hijack of
+`POST /exec/{id}/start` running through Emacs' `term-mode`.*
+
 ## Philosophy
 
-**Pure Elisp. Docker CLI is the only shelled-out dependency.**
+**Pure Elisp talking directly to the Docker engine API.**
 
-eldocker shells out to the Docker CLI (`docker`, `sbx`, etc.) for all
-daemon operations. Everything else — JSON parsing, UI rendering, config
-handling — is pure Emacs Lisp. No Python, no Go, no shell scripts.
+eldocker speaks HTTP/1.1 to the Docker daemon over its Unix socket (or
+TLS-wrapped TCP for remote daemons) — no `docker` CLI process is forked
+for list, inspect, lifecycle, log streaming, events, exec, or pull.
+Everything else — JSON parsing, UI rendering, config handling — is
+pure Emacs Lisp on top of built-in `json-parse-*` and GnuTLS.
 
-## What it does (planned)
+The CLI is kept only as a deliberately-narrow fallback for the handful
+of features that have no engine endpoint: `docker build` /
+`docker buildx` (BuildKit gRPC), `docker compose`, CLI plugins,
+`docker login` config writes, `DOCKER_HOST=ssh://…` transport, and
+`docker-credential-*` helpers.  Each is a clearly-named helper in one
+small place.  See [docs/direct-daemon-rewrite.md](docs/direct-daemon-rewrite.md).
 
-`M-x docker` opens a magit-style buffer showing your containers. From
-there:
+## What you can do
 
-| Key | Action |
-|-----|--------|
-| `?` | Transient dispatch menu (all operations) |
-| `g` | Refresh |
-| `q` | Quit |
-| `s` | Start container |
-| `S` | Stop container |
-| `r` | Restart container |
-| `d` | Delete container/image |
-| `i` | Inspect container/image |
-| `l` | Tail container logs |
-| `e` | Exec command in container |
-| `TAB` | Expand/collapse section details |
+`M-x docker` opens a magit-style buffer listing your containers.
+Views auto-refresh as the daemon's `/events` stream tells us what
+changed.
 
-### Planned views
+| Key | Action | Scope |
+|-----|--------|-------|
+| `?` | Transient dispatch menu | All views |
+| `g` | Refresh | All views |
+| `q` | Quit window | All views |
+| `i` | Inspect resource at point | All views |
+| `d` | Delete / disconnect (context-aware) | All views |
+| `RET` | Toggle section | All views |
+| `a` | Toggle running/all containers | Containers |
+| `s` / `S` / `r` / `K` | Start / Stop / Restart / Kill | Containers |
+| `l` | Tail logs (streaming, stdout/stderr demuxed) | Containers |
+| `e` | Exec a shell into the container | Containers |
+| `j` / `J` | Join / leave a network | Containers |
+| `p` | Pull image (via `?` transient) | Images |
 
-- **Containers** — running/all list with status, ports, names, images
-- **Images** — image list with tags, sizes, created
-- **Compose** — compose project status, service-level views
-- **Logs** — live tailing with follow, timestamps, streaming
-- **Exec** — interactive command execution in containers
+Three views ship today: `*docker:containers*`, `*docker:images*`,
+`*docker:networks*`.  Each subscribes to `/events` and refreshes
+automatically (debounced) on relevant changes.
 
 ## Architecture
 
 ```
- eldocker (this repo)
-   |
-   |-- docker-config.el   Docker env config (socket, TLS, hosts)
-   |-- docker-api.el      Docker CLI wrapper (call-process, JSON parse)
-   |-- docker-ps.el       Container listing, start/stop/rm/kill
-   |-- docker-images.el   Image listing, pull/push/build/rmi
-   |-- docker-logs.el     Log tailing (async process, follow)
-   |-- docker-exec.el     Container exec (interactive commands)
-   |-- docker-compose.el  Docker Compose operations
-   |-- docker.el          Shared UI (magit-section, transient menus)
-   |
-   +-- Docker CLI         The only external dependency (docker, sbx)
+docker-http.el        HTTP/1.1 over unix / TCP / TCP+TLS (GnuTLS)
+docker-stream.el      8-byte multiplex demux + ndjson splitter
+docker-api.el         /vX.Y-prefixed engine GET / POST / DELETE
+docker-config.el      Daemon connection params
+docker-ps.el          Containers: list / inspect / lifecycle
+docker-images.el      Images: list / inspect / tag / remove
+docker-networks.el    Networks: list / inspect / connect / remove
+docker-events.el      Long-lived /events stream + pub/sub
+docker-logs.el        Streaming /containers/{id}/logs, demuxed
+docker-terminal.el    Backend picker: eat → vterm → term
+docker-exec.el        Upgrade-hijacked /exec/{id}/start, TTY in Emacs
+docker-auth.el        ~/.docker/config.json + docker-credential-* helpers
+docker-pull.el        Streamed /images/create with per-layer progress
+docker.el             magit-section views, transient dispatch, actions
+reload.el             Dev helper: byte-compile + reload + re-enter modes
 ```
-
-### Networking
-
-- **CLI commands**: `call-process` / `start-process` to `docker` CLI
-- **JSON**: Emacs built-in `json.el` for parsing docker CLI output
-- **Streaming**: `start-process` with process filter for log tailing
-
-### UI
-
-Built on `magit-section` for collapsible sections and `transient` for
-popup menus. All views derive from `magit-section-mode`.
 
 ## Requirements
 
-- Emacs 29+
-- `magit-section`, `transient` packages
-- Docker CLI installed and functional
-- A running Docker daemon (local or remote)
+- Emacs 30+ built with native JSON (`json-parse-string`) and, for TLS
+  daemons, GnuTLS (`gnutls-available-p`).  eldocker refuses to load
+  without the former and refuses to TLS-connect without the latter.
+- `magit-section`, `transient`.
+- A running Docker daemon reachable over a Unix socket or TCP.
+- Optional but recommended for TTY exec: `package-install eat` (pure
+  Elisp) or compile in `vterm` for best fidelity.  Falls back to
+  built-in `term-mode` if neither is present.
 
 ## Quick start
 
@@ -79,8 +88,20 @@ popup menus. All views derive from `magit-section-mode`.
 (require 'docker)
 
 ;; Then:
-;;   M-x docker
+;;   M-x docker            ; containers view
+;;   M-x docker-images     ; images
+;;   M-x docker-networks   ; networks
 ```
+
+## Demo
+
+The GIF at the top is regenerated by `docs/record-demo.sh` (requires
+[asciinema](https://asciinema.org/) and
+[agg](https://github.com/asciinema/agg) — `brew install agg`).  The
+script spins up a sentinel `eldocker-ticker` container if needed,
+launches a scripted `emacs -nw` session via
+[`docs/demo-init.el`](docs/demo-init.el), records it with asciinema,
+and converts to GIF.
 
 ## License
 
