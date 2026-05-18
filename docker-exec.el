@@ -83,7 +83,8 @@ With prefix arg, force non-TTY mode (capture output, no terminal emulator)."
                                  ("w" . ,(format "%d" w))))))
 
 (defun docker-exec--maybe-resize (buf)
-  "Post a resize if BUF's window size differs from the last one we sent."
+  "Post a resize if BUF's window size differs from the last one we sent.
+Resizes both the local terminal emulator and the remote PTY."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (and docker-exec--id docker-exec--config)
@@ -92,6 +93,7 @@ With prefix arg, force non-TTY mode (capture output, no terminal emulator)."
           (unless (and docker-exec--last-dim
                        (equal docker-exec--last-dim (cons h w)))
             (setq docker-exec--last-dim (cons h w))
+            (docker-terminal-resize buf h w)
             (docker-exec--post-resize docker-exec--config
                                       docker-exec--id h w)))))))
 
@@ -105,37 +107,26 @@ With prefix arg, force non-TTY mode (capture output, no terminal emulator)."
 
 (defun docker-exec--start-tty (cfg cname exec-id)
   "Launch a TTY exec into CNAME and host it in the configured terminal backend.
-The Upgrade-style hijack makes the same socket bidirectional: we feed
-the daemon's decoded body bytes through `term-emulate-terminal' for
-display, and let `term-char-mode' send the user's keystrokes back over
-the same process.  A `window-size-change-functions' hook keeps the
-remote PTY size in sync with the Emacs window."
+The Upgrade hijack makes the same socket bidirectional: docker-http's
+stream filter strips the response headers, `docker-terminal-feed' pushes
+the decoded body bytes into the backend (eat / vterm / term), and
+`docker-terminal-bind' routes the user's keystrokes back over the same
+process.  A `window-size-change-functions' hook keeps the remote PTY in
+sync with the Emacs window."
   (let* ((bufname (format "*docker:exec:%s*" cname))
          (buf (docker-terminal-open bufname))
-         (proc-ref (list nil))
-         (deliver (lambda (bytes)
-                    (let ((proc (car proc-ref)))
-                      (when (and proc (buffer-live-p buf))
-                        (term-emulate-terminal proc bytes)))))
+         (deliver (lambda (bytes) (docker-terminal-feed buf bytes)))
          (proc (docker-exec--start-hijacked
                 cfg exec-id t deliver nil)))
-    (setcar proc-ref proc)
-    ;; Tie the network process to the buffer so input flows back over the
-    ;; same socket.  We do *not* call docker-terminal-attach here — that
-    ;; would reinstall a process filter, but docker-http-stream's filter
-    ;; needs to stay in place to strip the response headers.
     (with-current-buffer buf
       (setq docker-exec--id exec-id
             docker-exec--config cfg
-            docker-exec--last-dim nil)
-      (set-process-buffer proc buf)
-      (set-marker (process-mark proc) (point-max))
-      (term-char-mode))
-    ;; Register the global resize hook once; it filters per-buffer.
+            docker-exec--last-dim nil))
+    (docker-terminal-bind buf proc)
     (add-hook 'window-size-change-functions
               #'docker-exec--window-size-change)
     (pop-to-buffer buf)
-    ;; Best-effort initial resize once the buffer is in a window so
+    ;; Best-effort initial sync once the buffer is in a window so
     ;; `window-body-height/width' return real numbers.
     (docker-exec--maybe-resize buf)
     buf))

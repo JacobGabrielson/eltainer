@@ -24,7 +24,7 @@
 (setq inhibit-startup-screen t
       ring-bell-function 'ignore
       use-dialog-box nil
-      docker-terminal-backend 'term)
+      docker-terminal-backend 'auto)
 (when (fboundp 'menu-bar-mode) (menu-bar-mode -1))
 (when (fboundp 'tool-bar-mode) (tool-bar-mode -1))
 (when (fboundp 'scroll-bar-mode) (scroll-bar-mode -1))
