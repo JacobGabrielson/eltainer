@@ -5,7 +5,7 @@
 ;;   2. POST /exec/{id}/start             → hijacks the connection, raw bytes
 ;;
 ;; When called with TTY=t, the daemon returns one unmultiplexed stream
-;; and we hand the network process to `docker-terminal-attach' for
+;; and we hand the network process off to `eltainer-terminal-feed' for
 ;; rendering.  Non-TTY exec demultiplexes stdout/stderr the same way
 ;; logs do.
 
@@ -13,7 +13,7 @@
 (require 'docker-api)
 (require 'docker-http)
 (require 'docker-stream)
-(require 'docker-terminal)
+(require 'eltainer-terminal)
 
 (defun docker-exec--create (cfg container cmd tty)
   "POST /containers/{id}/exec, return the new exec instance Id.
@@ -88,12 +88,12 @@ Resizes both the local terminal emulator and the remote PTY."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (and docker-exec--id docker-exec--config)
-        (let* ((dim (docker-terminal-window-size buf))
+        (let* ((dim (eltainer-terminal-window-size buf))
                (h (car dim)) (w (cdr dim)))
           (unless (and docker-exec--last-dim
                        (equal docker-exec--last-dim (cons h w)))
             (setq docker-exec--last-dim (cons h w))
-            (docker-terminal-resize buf h w)
+            (eltainer-terminal-resize buf h w)
             (docker-exec--post-resize docker-exec--config
                                       docker-exec--id h w)))))))
 
@@ -108,21 +108,21 @@ Resizes both the local terminal emulator and the remote PTY."
 (defun docker-exec--start-tty (cfg cname exec-id)
   "Launch a TTY exec into CNAME and host it in the configured terminal backend.
 The Upgrade hijack makes the same socket bidirectional: docker-http's
-stream filter strips the response headers, `docker-terminal-feed' pushes
-the decoded body bytes into the backend (eat / vterm / term), and
-`docker-terminal-bind' routes the user's keystrokes back over the same
-process.  A `window-size-change-functions' hook keeps the remote PTY in
-sync with the Emacs window."
+stream filter strips the response headers, `eltainer-terminal-feed'
+pushes the decoded body bytes into the backend (eat / vterm / term),
+and `eltainer-terminal-bind' routes the user's keystrokes back over
+the same process.  A `window-size-change-functions' hook keeps the
+remote PTY in sync with the Emacs window."
   (let* ((bufname (format "*docker:exec:%s*" cname))
-         (buf (docker-terminal-open bufname))
-         (deliver (lambda (bytes) (docker-terminal-feed buf bytes)))
+         (buf (eltainer-terminal-open bufname))
+         (deliver (lambda (bytes) (eltainer-terminal-feed buf bytes)))
          (proc (docker-exec--start-hijacked
                 cfg exec-id t deliver nil)))
     (with-current-buffer buf
       (setq docker-exec--id exec-id
             docker-exec--config cfg
             docker-exec--last-dim nil))
-    (docker-terminal-bind buf proc)
+    (eltainer-terminal-bind buf proc)
     (add-hook 'window-size-change-functions
               #'docker-exec--window-size-change)
     (pop-to-buffer buf)

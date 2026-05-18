@@ -23,12 +23,13 @@
     "docker-networks"
     "docker-events"
     "docker-logs"
-    "docker-terminal"
     "docker-exec"
     "docker-auth"
     "docker-pull"
     "docker")
-  "Docker-side modules in load order (dependencies first).")
+  "Docker-side modules in load order (dependencies first).
+`eltainer-terminal' used to live here as `docker-terminal'; it's now
+loaded at the top level alongside `eltainer-ui'.")
 
 (defconst eltainer-k8s-modules
   '("k8s-config"
@@ -53,7 +54,7 @@ major mode in any live `docker-*-mode' / `k8s-*-mode' buffer."
                             load-path))
          (errors nil))
     ;; Top-level shared modules first.
-    (dolist (mod '("eltainer-ui"))
+    (dolist (mod '("eltainer-ui" "eltainer-terminal"))
       (let ((src (expand-file-name (concat mod ".el") eltainer--source-dir)))
         (when (file-exists-p src)
           (unless (byte-compile-file src) (push mod errors))
