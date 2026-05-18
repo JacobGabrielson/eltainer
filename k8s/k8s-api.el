@@ -1,25 +1,17 @@
 ;;; k8s-api.el --- Pure Elisp Kubernetes API client -*- lexical-binding: t -*-
 ;;
-;; Talks to the Kubernetes API server over HTTPS.  Everything above the
-;; TLS layer is pure Elisp: kubeconfig parsing, auth, JSON handling,
-;; resource helpers.
-;;
-;; TLS transport: currently uses Emacs's built-in GnuTLS via `url.el'
-;; because the pure Elisp TLS stack (elisp-stdlib) is too slow for
-;; practical use — X25519 key exchange takes >60s due to Emacs bignum
-;; performance.  Once the stdlib gains faster field arithmetic (or we
-;; use Emacs's native bignums more effectively), switch to
-;; `tls-session-open'.
+;; Talks to the Kubernetes API server over HTTPS via the shared
+;; `docker-http' transport (Phase B of the merge).  Kubeconfig parsing
+;; and resource helpers are k8s-specific; the wire is the same as the
+;; Docker engine path.
 ;;
 ;; Usage:
 ;;   (setq conn (k8s-connection-open "/path/to/kubeconfig"))
 ;;   (k8s-get conn "/api/v1/namespaces")
 
 (require 'cl-lib)
-(require 'json)
-(require 'url)
-(require 'url-http)
-(require 'gnutls)
+(require 'docker-config)
+(require 'docker-http)
 (require 'k8s-config)
 
 ;;; ---------------------------------------------------------------------------
@@ -35,181 +27,108 @@
   port              ; integer
   ca-file            ; temp file path for the CA cert, or nil
   client-cert-file   ; temp file path for client cert PEM, or nil
-  client-key-file)   ; temp file path for client key PEM, or nil
-
-;;; ---------------------------------------------------------------------------
-;;; Client-certificate authentication
-;;
-;; Docker Desktop and other clusters authenticate clients by certificate
-;; rather than bearer token. `url.el' has no direct hook for client certs,
-;; so we advise `gnutls-boot-parameters' to inject :keylist when this
-;; dynamic variable is bound.
-
-(defvar k8s--client-cert nil
-  "(KEY-FILE . CERT-FILE) for the in-flight TLS handshake, or nil.
-Bound dynamically around `url-retrieve-synchronously' calls so the
-GnuTLS handshake includes a client certificate.  Order matches GnuTLS's
-:keylist convention: key file first, certificate file second.")
+  client-key-file    ; temp file path for client key PEM, or nil
+  docker-cfg)        ; a `docker-config' built from the above, used as
+                     ; the transport handle for docker-http-request
 
 (defvar k8s-tls-priority "NORMAL:-VERS-TLS1.3"
   "GnuTLS priority string used for K8s API connections.
 TLS 1.3 is disabled because Emacs's GnuTLS does not reliably present
 client certificates during a 1.3 handshake — the server then sees the
-request as `system:anonymous'.  TLS 1.2 with cert auth works correctly.")
-
-(defun k8s--gnutls-boot-parameters-advice (orig-fn &rest args)
-  "Inject `k8s--client-cert' as :keylist into GnuTLS boot parameters."
-  (let ((params (apply orig-fn args)))
-    (when k8s--client-cert
-      (setq params (plist-put params :keylist
-                              (list (list (car k8s--client-cert)
-                                          (cdr k8s--client-cert))))))
-    params))
-
-(advice-add 'gnutls-boot-parameters :around
-            #'k8s--gnutls-boot-parameters-advice)
+request as `system:anonymous'.  TLS 1.2 with cert auth works.")
 
 ;;; ---------------------------------------------------------------------------
-;;; K8s API
+;;; Connection open
 
 (defun k8s-connection-open (kubeconfig-path)
   "Open a connection to the K8s cluster defined in KUBECONFIG-PATH.
-Returns a `k8s-connection' struct."
+Returns a `k8s-connection' struct.  The struct carries a `docker-config'
+in its `docker-cfg' slot — all subsequent requests go through
+`docker-http-request' against that config."
   (let* ((config (k8s-config-load kubeconfig-path))
          (cluster (k8s-config-resolve-cluster config))
          (user (k8s-config-resolve-user config))
          (server (k8s-cluster-server cluster))
          (host-port (k8s--parse-url server))
-         ;; Write CA cert to temp file and add to GnuTLS trust store
+         (host (car host-port))
+         (port (cdr host-port))
          (ca-pem (k8s-cluster-ca-cert-pem cluster))
-         (ca-file (when ca-pem
-                    (let ((f (make-temp-file "k8s-ca-" nil ".pem")))
-                      (with-temp-file f
-                        (set-buffer-multibyte nil)
-                        (insert ca-pem))
-                      (cl-pushnew f gnutls-trustfiles :test #'string=)
-                      f)))
-         ;; Write client cert and key to temp files (for cert-based auth)
+         (ca-file (k8s-api--temp-pem "k8s-ca-" ca-pem))
          (cert-pem (k8s-user-client-cert-pem user))
          (key-pem (k8s-user-client-key-pem user))
-         (client-cert-file
-          (when cert-pem
-            (let ((f (make-temp-file "k8s-cert-" nil ".pem")))
-              (with-temp-file f (set-buffer-multibyte nil) (insert cert-pem))
-              (set-file-modes f #o600)
-              f)))
-         (client-key-file
-          (when key-pem
-            (let ((f (make-temp-file "k8s-key-" nil ".pem")))
-              (with-temp-file f (set-buffer-multibyte nil) (insert key-pem))
-              (set-file-modes f #o600)
-              f))))
-    (message "emak8s: connecting to %s:%d ..." (car host-port) (cdr host-port))
+         (client-cert-file (k8s-api--temp-pem "k8s-cert-" cert-pem t))
+         (client-key-file (k8s-api--temp-pem "k8s-key-" key-pem t))
+         (token (k8s-user-token user))
+         (docker-cfg
+          (docker-config--new
+           :host host
+           :port port
+           :tls t
+           :tls-verify nil          ; k8s clusters routinely use self-
+                                    ; signed certs with no matching SAN
+           :tls-ca-cert ca-file
+           :tls-cert client-cert-file
+           :tls-key client-key-file
+           :tls-priority k8s-tls-priority
+           :default-headers
+           (append
+            (when token
+              `(("Authorization" . ,(format "Bearer %s" token))))
+            '(("Accept" . "application/json")
+              ("User-Agent" . "emak8s/0.1"))))))
+    (message "emak8s: connecting to %s:%d ..." host port)
     (k8s-connection--new
      :config config
      :cluster cluster
      :user user
      :server server
-     :host (car host-port)
-     :port (cdr host-port)
+     :host host
+     :port port
      :ca-file ca-file
      :client-cert-file client-cert-file
-     :client-key-file client-key-file)))
+     :client-key-file client-key-file
+     :docker-cfg docker-cfg)))
 
-(defun k8s--do-get (url)
-  "Perform a single GET to URL, return parsed JSON or nil on failure."
-  (message "emak8s: GET %s ..." (replace-regexp-in-string "\\?.*" "" url))
-  (let* ((start (float-time))
-         (buf (url-retrieve-synchronously url t nil 60))
-         (elapsed (- (float-time) start)))
-    (message "emak8s: GET %s ... %.1fs %s"
-             (replace-regexp-in-string "\\?.*" "" url)
-             elapsed
-             (if buf "ok" "TIMEOUT"))
-    (when buf
-      (unwind-protect
-          (with-current-buffer buf
-            (goto-char (point-min))
-            (when (re-search-forward "\n\n" nil t)
-              (condition-case nil
-                  (let* ((json-object-type 'alist)
-                         (json-array-type 'vector)
-                         (json-key-type 'symbol))
-                    (json-read))
-                (json-end-of-file
-                 (message "emak8s: GET %s ... truncated response"
-                          (replace-regexp-in-string "\\?.*" "" url))
-                 nil))))
-        (kill-buffer buf)))))
+(defun k8s-api--temp-pem (prefix pem &optional restrict-mode)
+  "Write PEM (a string) to a temp file with PREFIX and return its path."
+  (when pem
+    (let ((f (make-temp-file prefix nil ".pem")))
+      (with-temp-file f
+        (set-buffer-multibyte nil)
+        (insert pem))
+      (when restrict-mode (set-file-modes f #o600))
+      f)))
+
+;;; ---------------------------------------------------------------------------
+;;; K8s API requests (routed through docker-http-request)
+
+(defun k8s--http-json (conn method path)
+  "Send METHOD PATH against CONN.  Return decoded JSON or signal."
+  (let* ((cfg (k8s-connection-docker-cfg conn))
+         (resp (docker-http-request cfg method path)))
+    (unless (docker-http-ok-p resp)
+      (error "K8s API request failed: %s %s [%d]"
+             method path (docker-http-response-status resp)))
+    ;; Native JSON returns alists/lists per docker-http-json; k8s code
+    ;; downstream reads `.items' as a vector (the old json-read default
+    ;; for arrays).  `:array-type 'array' on json-parse-string preserves
+    ;; that — keep it for now and revisit when the k8s readers move to
+    ;; lists.
+    (let ((body (docker-http-response-body resp)))
+      (when (and body (> (length body) 0))
+        (json-parse-string body
+                           :object-type 'alist
+                           :array-type 'array
+                           :null-object nil
+                           :false-object :false)))))
 
 (defun k8s-get (conn path)
-  "Perform a GET request to PATH on the K8s API via CONN.
-Returns the parsed JSON response as an alist.
-Retries once on transient failures (truncated response, timeout)."
-  (let* ((server (k8s-connection-server conn))
-         (url (concat server path))
-         (user (k8s-connection-user conn))
-         (cert-file (k8s-connection-client-cert-file conn))
-         (key-file (k8s-connection-client-key-file conn))
-         ;; Set auth headers
-         (url-request-extra-headers
-          (append
-           (when (k8s-user-token user)
-             (list (cons "Authorization"
-                         (format "Bearer %s" (k8s-user-token user)))))
-           '(("Accept" . "application/json")
-             ("User-Agent" . "emak8s/0.1"))))
-         ;; Disable cert verification for self-signed cluster certs
-         (gnutls-verify-error nil)
-         (network-security-level 'low)
-         (url-http-attempt-keepalives nil)
-         (url-gateway-method 'native)
-         ;; Inject client cert into the TLS handshake (Docker Desktop, etc.)
-         (k8s--client-cert (and cert-file key-file (cons key-file cert-file)))
-         (gnutls-algorithm-priority k8s-tls-priority))
-    (or (k8s--do-get url)
-        ;; Retry once on failure
-        (progn
-          (message "emak8s: retrying %s ..." path)
-          (k8s--do-get url))
-        (error "K8s API request failed: %s" path))))
+  "Perform a GET request to PATH on the K8s API via CONN."
+  (k8s--http-json conn "GET" path))
 
 (defun k8s-delete (conn path)
-  "Perform a DELETE request to PATH on the K8s API via CONN.
-Returns the parsed JSON response."
-  (let* ((server (k8s-connection-server conn))
-         (url (concat server path))
-         (user (k8s-connection-user conn))
-         (cert-file (k8s-connection-client-cert-file conn))
-         (key-file (k8s-connection-client-key-file conn))
-         (url-request-method "DELETE")
-         (url-request-extra-headers
-          (append
-           (when (k8s-user-token user)
-             (list (cons "Authorization"
-                         (format "Bearer %s" (k8s-user-token user)))))
-           '(("Accept" . "application/json")
-             ("User-Agent" . "emak8s/0.1"))))
-         (gnutls-verify-error nil)
-         (network-security-level 'low)
-         (url-http-attempt-keepalives nil)
-         (url-gateway-method 'native)
-         (k8s--client-cert (and cert-file key-file (cons key-file cert-file)))
-         (gnutls-algorithm-priority k8s-tls-priority))
-    (message "emak8s: DELETE %s ..." path)
-    (let ((buf (url-retrieve-synchronously url t nil 60)))
-      (when buf
-        (unwind-protect
-            (with-current-buffer buf
-              (goto-char (point-min))
-              (when (re-search-forward "\n\n" nil t)
-                (condition-case nil
-                    (let* ((json-object-type 'alist)
-                           (json-array-type 'vector)
-                           (json-key-type 'symbol))
-                      (json-read))
-                  (json-end-of-file nil))))
-          (kill-buffer buf))))))
+  "Perform a DELETE request to PATH on the K8s API via CONN."
+  (k8s--http-json conn "DELETE" path))
 
 (defvar k8s--list-api-paths
   '((pods         "/api/v1/pods"
@@ -265,32 +184,12 @@ Keys are plural to match `k8s--define-view's macro name convention.")
 (defun k8s-get-text (conn path)
   "Perform a GET request to PATH on the K8s API via CONN.
 Returns the raw response body as a string (for non-JSON endpoints like logs)."
-  (let* ((server (k8s-connection-server conn))
-         (url (concat server path))
-         (user (k8s-connection-user conn))
-         (cert-file (k8s-connection-client-cert-file conn))
-         (key-file (k8s-connection-client-key-file conn))
-         (url-request-extra-headers
-          (append
-           (when (k8s-user-token user)
-             (list (cons "Authorization"
-                         (format "Bearer %s" (k8s-user-token user)))))
-           '(("Accept" . "text/plain")
-             ("User-Agent" . "emak8s/0.1"))))
-         (gnutls-verify-error nil)
-         (network-security-level 'low)
-         (url-http-attempt-keepalives nil)
-         (url-gateway-method 'native)
-         (k8s--client-cert (and cert-file key-file (cons key-file cert-file)))
-         (gnutls-algorithm-priority k8s-tls-priority)
-         (buf (url-retrieve-synchronously url t nil 60)))
-    (when buf
-      (unwind-protect
-          (with-current-buffer buf
-            (goto-char (point-min))
-            (when (re-search-forward "\n\n" nil t)
-              (buffer-substring-no-properties (point) (point-max))))
-        (kill-buffer buf)))))
+  (let* ((cfg (k8s-connection-docker-cfg conn))
+         (resp (docker-http-request
+                cfg "GET" path
+                :headers '(("Accept" . "text/plain")))))
+    (when (docker-http-ok-p resp)
+      (docker-http-response-body resp))))
 
 (defun k8s-pod-logs (conn namespace name &optional tail-lines container)
   "Fetch logs for pod NAME in NAMESPACE via CONN.

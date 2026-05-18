@@ -66,11 +66,26 @@
 
 (defun docker-http--connect (cfg)
   "Open a network process to the daemon described by CFG.
-Returns a live process whose buffer accumulates the raw response."
+Returns a live process whose buffer accumulates the raw response.
+
+CFG's `tls-priority' slot, if set, is bound to
+`gnutls-algorithm-priority' during the TLS handshake — k8s clusters
+need a TLS-1.2 priority because Emacs' GnuTLS doesn't reliably present
+client certificates in a 1.3 handshake."
   (let* ((host (docker-config-host cfg))
          (port (docker-config-port cfg))
          (socket-path (docker-config-socket-path cfg))
-         (tls-verify (docker-config-tls-verify cfg))
+         ;; `tls' is the modern flag; `tls-verify=t' with no explicit `tls'
+         ;; still means "use TLS" for backward-compat with old docker configs.
+         (tls (or (docker-config-tls cfg)
+                  (docker-config-tls-verify cfg)))
+         (strict-verify (docker-config-tls-verify cfg))
+         (tls-priority (docker-config-tls-priority cfg))
+         (gnutls-algorithm-priority (or tls-priority gnutls-algorithm-priority))
+         ;; Relax GnuTLS chain/hostname verification when the caller opted
+         ;; out (k8s clusters often present self-signed certs with no SAN
+         ;; that matches the local-loopback address we use).
+         (gnutls-verify-error (and strict-verify gnutls-verify-error))
          (buf (generate-new-buffer " *docker-http*")))
     (condition-case err
         (cond
@@ -82,7 +97,7 @@ Returns a live process whose buffer accumulates the raw response."
            :service socket-path
            :coding '(binary . binary)
            :nowait nil))
-         ((and host tls-verify)
+         ((and host tls)
           (docker-http--require-tls host)
           (make-network-process
            :name "docker-http"
@@ -98,10 +113,12 @@ Returns a live process whose buffer accumulates the raw response."
                   :hostname host
                   :trustfiles (when (docker-config-tls-ca-cert cfg)
                                 (list (docker-config-tls-ca-cert cfg)))
+                  ;; gnutls-boot-parameters :keylist takes (KEY CERT), not
+                  ;; (CERT KEY) — and gets a TLS error -56 when reversed.
                   :keylist (when (and (docker-config-tls-cert cfg)
                                       (docker-config-tls-key cfg))
-                             (list (list (docker-config-tls-cert cfg)
-                                         (docker-config-tls-key cfg))))))))
+                             (list (list (docker-config-tls-key cfg)
+                                         (docker-config-tls-cert cfg))))))))
          (host
           (make-network-process
            :name "docker-http"
@@ -225,16 +242,24 @@ QUERY is an alist of (KEY . VALUE) pairs URL-encoded into the path.
 HEADERS is an alist of extra request headers (merged on top of defaults).
 BODY is a string (typically pre-`json-serialize'd); set this *and*
 add a `Content-Type: application/json' header for JSON requests."
-  (let ((proc (docker-http--connect cfg))
-        (request (docker-http--build-request method path headers body query)))
+  (let* ((proc (docker-http--connect cfg))
+         (headers (docker-http--merge-headers
+                   (docker-config-default-headers cfg) headers))
+         (request (docker-http--build-request method path headers body query))
+         ;; Collect bytes in this string instead of the process buffer.
+         ;; Emacs's default filter writes a "Process X connection broken
+         ;; by remote peer\n" trailer into the buffer when a TLS
+         ;; connection ends — that synthesized text would otherwise tail-
+         ;; corrupt the response body and confuse `json-parse-string'.
+         (received ""))
+    (set-process-filter proc (lambda (_p data)
+                               (setq received (concat received data))))
     (unwind-protect
-        (let (raw parts status headers* body*)
+        (let (parts status headers* body*)
           (process-send-string proc request)
           (while (process-live-p proc)
             (accept-process-output proc 1.0))
-          (setq raw (with-current-buffer (process-buffer proc)
-                      (buffer-string)))
-          (setq parts (docker-http--split-response raw))
+          (setq parts (docker-http--split-response received))
           (setq status (docker-http--parse-status-line (nth 0 parts)))
           (setq headers* (docker-http--parse-headers (nth 1 parts)))
           (setq body* (docker-http--decode-body headers* (nth 2 parts)))
@@ -344,6 +369,8 @@ Callbacks:
   (unless on-chunk
     (error "docker-http-stream: on-chunk is required"))
   (let* ((proc (docker-http--connect cfg))
+         (headers (docker-http--merge-headers
+                   (docker-config-default-headers cfg) headers))
          (state (docker-http--stream-state--new
                  :buffer ""
                  :headers-seen nil

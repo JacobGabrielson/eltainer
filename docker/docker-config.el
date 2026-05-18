@@ -14,15 +14,22 @@
 ;;; Data model
 
 (cl-defstruct (docker-config (:constructor docker-config--new) (:copier nil))
-  "Connection parameters for a Docker daemon."
-  socket-path        ; string, Unix socket path
+  "Connection parameters for an HTTP+JSON daemon.
+Used for the Docker engine API and (after the merge) the Kubernetes
+API server; both share the same transport now."
+  socket-path        ; string, Unix socket path (docker only)
   host               ; string, TCP host (or nil for socket)
   port               ; integer, TCP port (or nil for socket)
-  tls-verify         ; boolean, verify TLS certs
+  tls                ; boolean, wrap the TCP connection in TLS
+  tls-verify         ; boolean, strict verification (off for self-signed)
   tls-ca-cert        ; string, CA cert path or nil
   tls-cert           ; string, client cert path or nil
   tls-key            ; string, client key path or nil
-  api-version)       ; string, API version or nil for latest
+  api-version        ; string, daemon API version or nil for latest
+  default-headers    ; alist of headers always merged into requests
+                     ; (k8s uses this for `Authorization: Bearer …')
+  tls-priority)      ; gnutls-algorithm-priority override, or nil
+                     ; (k8s needs a TLS-1.2 priority for cert auth)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Environment detection
@@ -86,15 +93,17 @@ Priority: DOCKER_HOST env var, else Unix socket, else default socket."
   (let* ((socket-path (docker--detect-socket))
          (host (docker--detect-host))
          (port (docker--detect-port)))
-    (docker-config--new
-     :socket-path (if host nil socket-path)
-     :host host
-     :port port
-     :tls-verify (docker--detect-tls-enable)
-     :tls-ca-cert (docker--detect-tls-ca-cert)
-     :tls-cert (docker--detect-tls-cert)
-     :tls-key (docker--detect-tls-key)
-     :api-version (docker--detect-api-version))))
+    (let ((tls (docker--detect-tls-enable)))
+      (docker-config--new
+       :socket-path (if host nil socket-path)
+       :host host
+       :port port
+       :tls tls
+       :tls-verify tls
+       :tls-ca-cert (docker--detect-tls-ca-cert)
+       :tls-cert (docker--detect-tls-cert)
+       :tls-key (docker--detect-tls-key)
+       :api-version (docker--detect-api-version)))))
 
 (defun docker-config-dockerfile-p (filename)
   "Return t if FILENAME looks like a Dockerfile (Dockerfile or *.dockerfile)."
