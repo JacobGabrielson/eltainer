@@ -18,6 +18,7 @@
 (add-to-list 'load-path (expand-file-name "docker" eltainer--source-dir))
 (add-to-list 'load-path (expand-file-name "k8s"    eltainer--source-dir))
 
+(require 'eltainer-ui)
 (require 'docker)
 (require 'k8s)
 

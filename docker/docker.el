@@ -10,6 +10,7 @@
 (require 'cl-lib)
 (require 'magit-section)
 (require 'transient)
+(require 'eltainer-ui)
 (require 'docker-config)
 (require 'docker-api)
 (require 'docker-ps)
@@ -46,45 +47,32 @@ Set this to a `docker-config' struct to bypass environment detection."
 ;;; ---------------------------------------------------------------------------
 ;;; Faces
 
-(defface docker-section-heading
-  '((t :inherit magit-section-heading))
-  "Face for section headings."
-  :group 'docker)
+;; The look-and-feel lives on the shared `eltainer-*' faces; docker
+;; just inherits, so re-themes happen in one place.
 
-(defface docker-container-name
-  '((t :inherit magit-branch-local))
-  "Face for container names."
-  :group 'docker)
+(defface docker-section-heading '((t :inherit eltainer-section-heading))
+  "Face for section headings." :group 'docker)
 
-(defface docker-image-name
-  '((t :inherit magit-tag))
-  "Face for image names."
-  :group 'docker)
+(defface docker-container-name '((t :inherit eltainer-resource-name))
+  "Face for container names." :group 'docker)
 
-(defface docker-network-name
-  '((t :inherit magit-branch-remote))
-  "Face for network names."
-  :group 'docker)
+(defface docker-image-name '((t :inherit eltainer-resource-secondary))
+  "Face for image names." :group 'docker)
 
-(defface docker-status-running
-  '((t :inherit success))
-  "Face for Running status."
-  :group 'docker)
+(defface docker-network-name '((t :inherit magit-branch-remote))
+  "Face for network names." :group 'docker)
 
-(defface docker-status-exited
-  '((t :inherit error))
-  "Face for Exited status."
-  :group 'docker)
+(defface docker-status-running '((t :inherit eltainer-status-running))
+  "Face for Running status." :group 'docker)
 
-(defface docker-status-other
-  '((t :inherit warning))
-  "Face for other statuses."
-  :group 'docker)
+(defface docker-status-exited '((t :inherit eltainer-status-error))
+  "Face for Exited status." :group 'docker)
 
-(defface docker-dim
-  '((t :inherit shadow))
-  "Face for secondary information."
-  :group 'docker)
+(defface docker-status-other '((t :inherit eltainer-status-warn))
+  "Face for other statuses." :group 'docker)
+
+(defface docker-dim '((t :inherit eltainer-dim))
+  "Face for secondary information." :group 'docker)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Connection helpers
@@ -102,18 +90,8 @@ Set this to a `docker-config' struct to bypass environment detection."
 ;;; ---------------------------------------------------------------------------
 ;;; Shared helpers
 
-(defun docker--age-string (timestamp)
-  "Convert ISO TIMESTAMP to a human-readable age string."
-  (if (null timestamp)
-      "?"
-    (let* ((then (float-time (date-to-time timestamp)))
-           (now (float-time))
-           (secs (- now then)))
-      (cond
-       ((< secs 60)       (format "%ds" (truncate secs)))
-       ((< secs 3600)     (format "%dm" (truncate (/ secs 60))))
-       ((< secs 86400)    (format "%dh" (truncate (/ secs 3600))))
-       (t                 (format "%dd" (truncate (/ secs 86400))))))))
+(defalias 'docker--age-string #'eltainer-ui-age-string)
+(defalias 'docker--truncate #'eltainer-ui-truncate)
 
 (defun docker--status-face (state)
   "Return the face for STATE string."
@@ -123,12 +101,6 @@ Set this to a `docker-config' struct to bypass environment detection."
     ("exited"   'docker-status-exited)
     ("dead"     'docker-status-exited)
     (_          'docker-status-other)))
-
-(defun docker--truncate (str width)
-  "Truncate STR to WIDTH characters, appending ellipsis if needed."
-  (if (> (length str) width)
-      (concat (substring str 0 (- width 3)) "...")
-    str))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Keymaps
@@ -542,26 +514,10 @@ section."
       (pop-to-buffer buf))))
 
 (defun docker--describe-value (value indent)
-  "Recursively format VALUE as readable text at INDENT level."
-  (cond
-   ((null value) (insert "nil\n"))
-   ((stringp value) (insert value "\n"))
-   ((numberp value) (insert (format "%s\n" value)))
-   ((eq value t) (insert "true\n"))
-   ((vectorp value)
-    (insert "\n")
-    (seq-doseq (item (append value nil))
-      (insert (make-string indent ?\s) "- ")
-      (docker--describe-value item (+ indent 2))))
-   ((and (listp value) (consp (car value)))
-    ;; alist
-    (insert "\n")
-    (dolist (pair value)
-      (let ((key (format "%s" (car pair))))
-        (insert (make-string indent ?\s)
-                (propertize (concat key ": ") 'font-lock-face 'docker-section-heading))
-        (docker--describe-value (cdr pair) (+ indent 2)))))
-   (t (insert (format "%S\n" value)))))
+  "Recursively format VALUE as readable text at INDENT level.
+Thin wrapper over `eltainer-ui-describe-value' that keeps the
+docker-themed heading face."
+  (eltainer-ui-describe-value value indent 'docker-section-heading))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Delete resource

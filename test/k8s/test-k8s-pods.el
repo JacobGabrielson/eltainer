@@ -3,10 +3,11 @@
 (require 'ert)
 (require 'package)
 
-;; Layout: <repo>/test/k8s/this-file.el  →  <repo>/{k8s,docker}/*.el
+;; Layout: <repo>/test/k8s/this-file.el  →  <repo>/{eltainer-ui,k8s,docker}/*.el
 (let* ((this-dir (file-name-directory (or load-file-name buffer-file-name)))
        (test-dir (file-name-directory (directory-file-name this-dir)))
        (repo-root (file-name-directory (directory-file-name test-dir))))
+  (add-to-list 'load-path repo-root)
   (add-to-list 'load-path (expand-file-name "k8s" repo-root))
   (add-to-list 'load-path (expand-file-name "docker" repo-root)))
 

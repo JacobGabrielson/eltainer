@@ -10,6 +10,7 @@
 (require 'cl-lib)
 (require 'magit-section)
 (require 'transient)
+(require 'eltainer-ui)
 (require 'k8s-config)
 (require 'k8s-api)
 (require 'k8s-watch)
@@ -56,45 +57,32 @@ Called with one optional arg (namespace), returns a path string.")
 ;;; ---------------------------------------------------------------------------
 ;;; Faces
 
-(defface k8s-section-heading
-  '((t :inherit magit-section-heading))
-  "Face for section headings."
-  :group 'k8s)
+;; Faces inherit from the shared `eltainer-*' family so theme tweaks
+;; happen in one place.
 
-(defface k8s-resource-name
-  '((t :inherit magit-branch-local))
-  "Face for resource names."
-  :group 'k8s)
+(defface k8s-section-heading '((t :inherit eltainer-section-heading))
+  "Face for section headings." :group 'k8s)
 
-(defface k8s-namespace
-  '((t :inherit magit-tag))
-  "Face for namespace names."
-  :group 'k8s)
+(defface k8s-resource-name '((t :inherit eltainer-resource-name))
+  "Face for resource names." :group 'k8s)
 
-(defface k8s-status-running
-  '((t :inherit success))
-  "Face for Running/Active status."
-  :group 'k8s)
+(defface k8s-namespace '((t :inherit eltainer-resource-secondary))
+  "Face for namespace names." :group 'k8s)
 
-(defface k8s-status-pending
-  '((t :inherit warning))
-  "Face for Pending status."
-  :group 'k8s)
+(defface k8s-status-running '((t :inherit eltainer-status-running))
+  "Face for Running/Active status." :group 'k8s)
 
-(defface k8s-status-failed
-  '((t :inherit error))
-  "Face for Failed status."
-  :group 'k8s)
+(defface k8s-status-pending '((t :inherit eltainer-status-warn))
+  "Face for Pending status." :group 'k8s)
 
-(defface k8s-status-other
-  '((t :inherit shadow))
-  "Face for other statuses."
-  :group 'k8s)
+(defface k8s-status-failed '((t :inherit eltainer-status-error))
+  "Face for Failed status." :group 'k8s)
 
-(defface k8s-dim
-  '((t :inherit shadow))
-  "Face for secondary information."
-  :group 'k8s)
+(defface k8s-status-other '((t :inherit eltainer-status-other))
+  "Face for other statuses." :group 'k8s)
+
+(defface k8s-dim '((t :inherit eltainer-dim))
+  "Face for secondary information." :group 'k8s)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Connection helpers
@@ -130,18 +118,7 @@ Called with one optional arg (namespace), returns a path string.")
   "Return metadata.labels alist from RESOURCE."
   (cdr (assq 'labels (cdr (assq 'metadata resource)))))
 
-(defun k8s--age-string (timestamp)
-  "Convert ISO TIMESTAMP to a human-readable age string."
-  (if (null timestamp)
-      "?"
-    (let* ((then (float-time (date-to-time timestamp)))
-           (now (float-time))
-           (secs (- now then)))
-      (cond
-       ((< secs 60)       (format "%ds" (truncate secs)))
-       ((< secs 3600)     (format "%dm" (truncate (/ secs 60))))
-       ((< secs 86400)    (format "%dh" (truncate (/ secs 3600))))
-       (t                 (format "%dd" (truncate (/ secs 86400))))))))
+(defalias 'k8s--age-string #'eltainer-ui-age-string)
 
 (defun k8s--phase-face (phase)
   "Return the face for PHASE string."
@@ -291,26 +268,10 @@ Called with one optional arg (namespace), returns a path string.")
 ;;; Describe resource
 
 (defun k8s--describe-value (value indent)
-  "Recursively format VALUE as readable text at INDENT level."
-  (cond
-   ((null value) (insert "nil\n"))
-   ((stringp value) (insert value "\n"))
-   ((numberp value) (insert (format "%s\n" value)))
-   ((eq value t) (insert "true\n"))
-   ((vectorp value)
-    (insert "\n")
-    (seq-doseq (item (append value nil))
-      (insert (make-string indent ?\s) "- ")
-      (k8s--describe-value item (+ indent 2))))
-   ((and (listp value) (consp (car value)))
-    ;; alist
-    (insert "\n")
-    (dolist (pair value)
-      (let ((key (format "%s" (car pair))))
-        (insert (make-string indent ?\s)
-                (propertize (concat key ": ") 'font-lock-face 'k8s-section-heading))
-        (k8s--describe-value (cdr pair) (+ indent 2)))))
-   (t (insert (format "%S\n" value)))))
+  "Recursively format VALUE as readable text at INDENT level.
+Thin wrapper over `eltainer-ui-describe-value' that keeps the
+k8s-themed heading face."
+  (eltainer-ui-describe-value value indent 'k8s-section-heading))
 
 (defun k8s--describe-insert-events (conn ns name)
   "Insert events for resource NAME in NS."

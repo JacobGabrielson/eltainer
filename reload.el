@@ -48,8 +48,17 @@ major mode in any live `docker-*-mode' / `k8s-*-mode' buffer."
   (interactive)
   (let* ((docker-dir (expand-file-name "docker" eltainer--source-dir))
          (k8s-dir (expand-file-name "k8s" eltainer--source-dir))
-         (load-path (append (list docker-dir k8s-dir) load-path))
+         (load-path (append (list docker-dir k8s-dir
+                                  eltainer--source-dir)
+                            load-path))
          (errors nil))
+    ;; Top-level shared modules first.
+    (dolist (mod '("eltainer-ui"))
+      (let ((src (expand-file-name (concat mod ".el") eltainer--source-dir)))
+        (when (file-exists-p src)
+          (unless (byte-compile-file src) (push mod errors))
+          (setq features (delq (intern mod) features))
+          (load (file-name-sans-extension src) nil 'nomessage))))
     (cl-loop for (subdir . mods) in `((,docker-dir . ,eltainer-docker-modules)
                                       (,k8s-dir   . ,eltainer-k8s-modules))
              do
