@@ -95,10 +95,20 @@ available.  The other values force a specific backend."
 
 (defun eltainer-terminal--feed-eat (buffer bytes)
   (with-current-buffer buffer
-    (let ((inhibit-read-only t)
-          (inhibit-modification-hooks t))
-      (eat-term-process-output eat-terminal bytes)
-      (eat-term-redisplay eat-terminal))))
+    ;; Mirror what `eat--process-output-queue' does for its own child
+    ;; process: process bytes, redisplay, then run the scroll-sync
+    ;; function so `point' and `window-start' track the terminal
+    ;; cursor.  Without this `point' lags the cursor as output arrives.
+    (let ((sync-windows (eat--synchronize-scroll-windows)))
+      (save-restriction
+        (widen)
+        (let ((inhibit-read-only t)
+              (inhibit-modification-hooks t)
+              (buffer-undo-list t))
+          (eat-term-process-output eat-terminal bytes)
+          (eat-term-redisplay eat-terminal)))
+      (when (functionp eat--synchronize-scroll-function)
+        (funcall eat--synchronize-scroll-function sync-windows)))))
 
 (defun eltainer-terminal--bind-eat (buffer proc)
   (with-current-buffer buffer
