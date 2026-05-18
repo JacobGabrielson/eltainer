@@ -1,137 +1,183 @@
-# eldocker
+# eltainer
 
-A pure Emacs Lisp Docker client and magit-style Docker browser.
+A pure Emacs Lisp porcelain for **Docker and Kubernetes**, fronted by
+a single magit-style UI.
 
-![eldocker exec demo](docs/exec-demo.gif)
+> Note: the repo is still named `eldocker` while the rewrite settles.
+> The eventual rename to `eltainer` is parked behind everything
+> working.  GitHub mirrors at
+> [JacobGabrielson/eldocker](https://github.com/JacobGabrielson/eldocker)
+> and [JacobGabrielson/eltainer](https://github.com/JacobGabrielson/eltainer).
 
-*Pressing `e` on a container row opens a real shell inside it — no
-`docker exec -it` involved, just an HTTP Upgrade hijack of
-`POST /exec/{id}/start` running through Emacs' `term-mode`.*
+![eltainer dashboard + docker exec](docs/exec-demo.gif)
+
+*`M-x eltainer` opens a dashboard listing every available view in both
+backends.  `c` jumps to the docker containers list; `e` on a row opens
+a real shell inside the container — via HTTP Upgrade hijack of
+`POST /exec/{id}/start`, rendered in `eat`.  No `docker` CLI involved.*
 
 ## Philosophy
 
-**Pure Elisp talking directly to the Docker engine API.**
+**Pure Elisp talking directly to the daemon.**
 
-eldocker speaks HTTP/1.1 to the Docker daemon over its Unix socket (or
-TLS-wrapped TCP for remote daemons) — no `docker` CLI process is forked
-for list, inspect, lifecycle, log streaming, events, exec, or pull.
-Everything else — JSON parsing, UI rendering, config handling — is
-pure Emacs Lisp on top of built-in `json-parse-*` and GnuTLS.
+eltainer speaks HTTP/1.1 to the Docker daemon over its Unix socket
+**and** HTTPS to the Kubernetes API server.  Both halves share one
+transport (`docker-http.el`), one streaming/event pipeline, one
+terminal abstraction.  No `docker` CLI, no `kubectl`.  JSON via native
+`json-parse-*`, TLS via built-in GnuTLS; the package refuses to load
+without the former and refuses to TLS-connect without the latter.
 
-The CLI is kept only as a deliberately-narrow fallback for the handful
-of features that have no engine endpoint: `docker build` /
-`docker buildx` (BuildKit gRPC), `docker compose`, CLI plugins,
-`docker login` config writes, `DOCKER_HOST=ssh://…` transport, and
-`docker-credential-*` helpers.  Each is a clearly-named helper in one
-small place.  See [docs/direct-daemon-rewrite.md](docs/direct-daemon-rewrite.md).
+CLI fallbacks are kept *only* for things the engine APIs genuinely
+can't do — `docker build` (BuildKit gRPC), `docker compose`, CLI
+plugins, `docker login` config writes, `DOCKER_HOST=ssh://…` transport,
+and `docker-credential-*` / kubeconfig-exec helper binaries.  Each is
+one clearly-named function in one place.  See
+[docs/direct-daemon-rewrite.md](docs/direct-daemon-rewrite.md) and
+[docs/merge-emak8s.md](docs/merge-emak8s.md).
 
 ## What you can do
 
-`M-x docker` opens a magit-style buffer listing your containers.
+`M-x eltainer` is the home screen.  From there, single-key launchers:
+
+| Backend | Key | View |
+|---------|-----|------|
+| Docker | `c` | Containers (running; `a` toggles all) |
+| Docker | `I` | Images |
+| Docker | `N` | Networks (+ connected containers) |
+| Docker | `p` | Pull image (streamed per-layer progress) |
+| Kubernetes | `k` | Pods grouped by namespace |
+| Kubernetes | `d` | Deployments |
+| Kubernetes | `s` | Services |
+| Kubernetes | `S` | StatefulSets |
+| Kubernetes | `D` | DaemonSets |
+| Kubernetes | `j` / `J` | Jobs / CronJobs |
+| Kubernetes | `i` | Ingresses |
+| Kubernetes | `m` / `x` | ConfigMaps / Secrets |
+
+`M-x docker` and `M-x k8s` still work directly and bypass the
+dashboard if that's what you want.
+
+### Inside any docker view
+
+| Key | Action |
+|-----|--------|
+| `?` | Transient dispatch menu |
+| `g` | Refresh |
+| `q` | Quit window |
+| `RET` | Toggle section / DWIM |
+| `i` | Inspect resource at point |
+| `d` | Delete / disconnect (context-aware) |
+| `a` | Toggle running-only vs. all (containers view) |
+| `s` `S` `r` `K` | Start / Stop / Restart / Kill container |
+| `l` | Tail logs (streaming, stdout / stderr demuxed) |
+| `e` | Exec a shell inside the container (TTY) |
+| `j` `J` | Join / leave a network |
+
 Views auto-refresh as the daemon's `/events` stream tells us what
-changed.
+changed (debounced).  The TTY exec lands in whichever screen-oriented
+emulator is available (`eat` → `vterm` → `term`; `M-x customize-variable
+eltainer-terminal-backend` to override).
 
-| Key | Action | Scope |
-|-----|--------|-------|
-| `?` | Transient dispatch menu | All views |
-| `g` | Refresh | All views |
-| `q` | Quit window | All views |
-| `i` | Inspect resource at point | All views |
-| `d` | Delete / disconnect (context-aware) | All views |
-| `RET` | Toggle section | All views |
-| `a` | Toggle running/all containers | Containers |
-| `s` / `S` / `r` / `K` | Start / Stop / Restart / Kill | Containers |
-| `l` | Tail logs (streaming, stdout/stderr demuxed) | Containers |
-| `e` | Exec a shell into the container | Containers |
-| `j` / `J` | Join / leave a network | Containers |
-| `p` | Pull image (via `?` transient) | Images |
+### Inside the k8s view
 
-Three views ship today: `*docker:containers*`, `*docker:images*`,
-`*docker:networks*`.  Each subscribes to `/events` and refreshes
-automatically (debounced) on relevant changes.
-
-## Status: merging with emak8s
-
-This repo is in the middle of folding [emak8s](../emak8s) in so a
-single Emacs frontend covers both Docker daemons and Kubernetes
-clusters.  As of Phase A:
-
-- `M-x docker` — unchanged.
-- `M-x k8s` — works against your kubeconfig (kubeconfig path or `KUBECONFIG`).
-- `M-x eltainer` — picks one of the two backends (completing-read).
-- Sources live in `docker/` and `k8s/` subdirectories; `eltainer.el`
-  is the loader.  Phase B will lift the shared HTTP transport.
-
-See [docs/merge-emak8s.md](docs/merge-emak8s.md) for the plan.
+| Key | Action |
+|-----|--------|
+| `?` | Dispatch menu (resource types) |
+| `g` | Refresh |
+| `N` | Switch namespace |
+| `w` | Toggle live watch (auto-update via the K8s watch API) |
+| `i` | Describe resource |
+| `l` | Tail pod logs |
+| `d` | Delete resource (with confirmation) |
+| `TAB` | Expand / collapse section |
 
 ## Architecture
 
 ```
-eltainer.el            Loader + `M-x eltainer'
+eltainer.el            Dashboard + `M-x eltainer'
+eltainer-ui.el         Shared faces, age-string, describe-value
+eltainer-terminal.el   Terminal backend selector: eat → vterm → term
 reload.el              Dev helper: byte-compile + reload both halves
 
 docker/
   docker-http.el       HTTP/1.1 over unix / TCP / TCP+TLS (GnuTLS)
+                       + chunked-decoded streaming.  Used by k8s too.
   docker-stream.el     8-byte multiplex demux + ndjson splitter
   docker-api.el        /vX.Y-prefixed engine GET / POST / DELETE
-  docker-config.el     Daemon connection params
+  docker-config.el     Connection params struct (used by k8s too)
   docker-ps.el         Containers: list / inspect / lifecycle
   docker-images.el     Images: list / inspect / tag / remove
   docker-networks.el   Networks: list / inspect / connect / remove
   docker-events.el     Long-lived /events stream + pub/sub
   docker-logs.el       Streaming /containers/{id}/logs, demuxed
-  docker-terminal.el   Backend picker: eat → vterm → term
-  docker-exec.el       Upgrade-hijacked /exec/{id}/start, TTY in Emacs
+  docker-exec.el       Upgrade-hijacked /exec/{id}/start TTY
   docker-auth.el       ~/.docker/config.json + docker-credential-* helpers
   docker-pull.el       Streamed /images/create with per-layer progress
-  docker.el            magit-section views, transient dispatch, actions
+  docker.el            magit-section views + transient + actions
 
 k8s/
   k8s-config.el        kubeconfig YAML parser (subset)
-  k8s-api.el           REST client over GnuTLS (Phase B: lift onto docker-http)
-  k8s-watch.el         Per-resource watch streams
+  k8s-api.el           REST client (thin wrapper over docker-http)
+  k8s-watch.el         Watch streams on docker-http-stream + ndjson splitter
   k8s-pods.el          Pods view: phases, restarts, container statuses
-  k8s-fs.el            Pod-fs browser  (kubectl-exec underneath)
-  k8s-fs-ui.el         …its UI layer
-  k8s-exec.el          WebSocket exec into pods
+  k8s-fs.el            Pod-fs browser
+  k8s-fs-ui.el           …its UI layer
+  k8s-exec.el          One-shot exec (returns stdout / stderr / exit-code)
   k8s.el               Shared k8s magit-section views + transient
 ```
 
+Phase A → D of the [merge plan](docs/merge-emak8s.md) are landed; that
+lifted the HTTP transport, the streaming/event pipeline, the
+magit-section helpers, the faces, and the terminal abstraction so
+both halves ride on one stack.  Interactive (TTY) `k8s exec` over
+WebSockets is the natural next consumer of `eltainer-terminal`.
+
 ## Requirements
 
-- Emacs 30+ built with native JSON (`json-parse-string`) and, for TLS
-  daemons, GnuTLS (`gnutls-available-p`).  eldocker refuses to load
+- Emacs 30+ with native JSON (`json-parse-string`) and, for any TLS
+  target, GnuTLS (`gnutls-available-p`).  eltainer refuses to load
   without the former and refuses to TLS-connect without the latter.
-- `magit-section`, `transient`.
-- A running Docker daemon reachable over a Unix socket or TCP.
-- Optional but recommended for TTY exec: `package-install eat` (pure
-  Elisp) or compile in `vterm` for best fidelity.  Falls back to
-  built-in `term-mode` if neither is present.
+- `magit-section`, `transient`.  `company` for the k8s namespace
+  picker.
+- A running Docker daemon and / or a kubeconfig.
+- Optional but recommended for TTY exec:
+  [`eat`](https://codeberg.org/akib/emacs-eat) (`M-x package-install
+  eat`, pure-elisp) or
+  [`vterm`](https://github.com/akermu/emacs-libvterm) (compiled
+  module).  Falls back to built-in `term-mode` if neither is present.
 
 ## Quick start
 
 ```elisp
 (add-to-list 'load-path "/path/to/eldocker")
-(require 'eltainer)               ; loads both docker/ and k8s/
+(require 'eltainer)
 
 ;; Then any of:
-;;   M-x eltainer          ; prompt for backend
-;;   M-x docker            ; containers view
-;;   M-x docker-images     ; images
-;;   M-x docker-networks   ; networks
-;;   M-x k8s               ; cluster pods view
+;;   M-x eltainer          ; dashboard listing every view
+;;   M-x docker            ; jump straight to docker containers
+;;   M-x k8s               ; jump straight to k8s pods
+```
+
+For development:
+
+```elisp
+(load "/path/to/eldocker/reload.el")
+;; M-x eltainer-reload       ; byte-compile + reload + re-enter open buffers
 ```
 
 ## Demo
 
-The GIF at the top is regenerated by `docs/record-demo.sh` (requires
+The GIF up top is regenerated by `docs/record-demo.sh` (requires
 [asciinema](https://asciinema.org/) and
-[agg](https://github.com/asciinema/agg) — `brew install agg`).  The
-script spins up a sentinel `eldocker-ticker` container if needed,
-launches a scripted `emacs -nw` session via
-[`docs/demo-init.el`](docs/demo-init.el), records it with asciinema,
-and converts to GIF.
+[agg](https://github.com/asciinema/agg) — `brew install agg`).  It
+spins up a sentinel `eldocker-ticker` container, scripts an
+`emacs -nw` session through
+[`docs/demo-init.el`](docs/demo-init.el), records with asciinema, and
+converts to GIF.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).  Code lifted from emak8s (MIT) is
+relicensed under Apache 2.0 with attribution; the LICENSE on the
+upstream emak8s repo applies to any code there that hasn't been
+imported.
