@@ -46,18 +46,12 @@
       ("x" "Secrets"       k8s-secrets))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).")
 
-(defvar-keymap eltainer-mode-map
-  :parent magit-section-mode-map)
-
-;; Re-apply the dashboard keys on every load.  `defvar-keymap' (like
-;; `defvar') only initializes when unbound, so changes to its form
-;; would silently no-op on `eltainer-reload'.
-(dolist (pair '(("q"   . quit-window)
-                ("g"   . eltainer-refresh)
-                ("?"   . describe-mode)
-                ("b"   . eltainer-switch-kubeconfig)
-                ("RET" . eltainer-dwim-ret)))
-  (keymap-set eltainer-mode-map (car pair) (cdr pair)))
+(defvar eltainer-mode-map (make-sparse-keymap)
+  "Keymap for `eltainer-mode'.
+Reset on every file load so `M-x eltainer-reload' picks up changes
+to `eltainer-views' (and to the explicit bindings just below)
+instead of carrying stale entries forward.  `p' / `n' fall through
+to the parent `magit-section-mode-map' for section navigation.")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Kubeconfig switching (magit-branch-style `b')
@@ -235,13 +229,29 @@ q to cancel."
   (setq-local revert-buffer-function
               (lambda (_ignore-auto _noconfirm) (eltainer-refresh))))
 
-(defun eltainer--bind-launchers ()
-  "Wire each entry's KEY to its COMMAND in the dashboard keymap."
+(defun eltainer--rebuild-keymap ()
+  "(Re)populate `eltainer-mode-map' from scratch.
+Clears any prior bindings (in case `eltainer-views' just lost a key
+on reload), restores the parent, sets the explicit dashboard keys,
+then wires each view entry's KEY to its COMMAND."
+  (setcdr eltainer-mode-map nil)        ; clear existing bindings
+  (set-keymap-parent eltainer-mode-map magit-section-mode-map)
+  (dolist (pair '(("q"   . quit-window)
+                  ("g"   . eltainer-refresh)
+                  ("?"   . describe-mode)
+                  ("b"   . eltainer-switch-kubeconfig)
+                  ("RET" . eltainer-dwim-ret)))
+    (keymap-set eltainer-mode-map (car pair) (cdr pair)))
   (dolist (group eltainer-views)
     (dolist (entry (cdr group))
       (let ((key (nth 0 entry))
             (cmd (nth 2 entry)))
         (keymap-set eltainer-mode-map key cmd)))))
+
+;; Build the keymap on every file load so the data above and the
+;; explicit bindings inside `eltainer--rebuild-keymap' both take
+;; effect under `M-x eltainer-reload'.
+(eltainer--rebuild-keymap)
 
 (defun eltainer--insert-entry (entry)
   "Insert one dashboard row for ENTRY (KEY LABEL COMMAND)."
@@ -316,7 +326,6 @@ q to cancel."
   (let ((buf (get-buffer-create "*eltainer*")))
     (with-current-buffer buf
       (eltainer-mode)
-      (eltainer--bind-launchers)
       (eltainer-refresh))
     (pop-to-buffer buf)))
 

@@ -136,7 +136,9 @@ on the same row instead of jumping to the top."
           :line (line-number-at-pos))))
 
 (defun k8s--restore-point-context (ctx)
-  "Re-seek to the section matching CTX (from `k8s--save-point-context')."
+  "Re-seek to the section matching CTX (from `k8s--save-point-context').
+Also re-runs the hl-line overlay if the mode is on — the timer-driven
+refresh doesn't fire `post-command-hook' to recreate it."
   (let ((id (plist-get ctx :id))
         (line (plist-get ctx :line))
         target)
@@ -155,7 +157,10 @@ on the same row instead of jumping to the top."
      (target (goto-char target))
      (line   (goto-char (point-min))
              (forward-line (max 0 (1- line))))
-     (t      (goto-char (point-min))))))
+     (t      (goto-char (point-min))))
+    (when (and (bound-and-true-p hl-line-mode)
+               (fboundp 'hl-line-highlight))
+      (hl-line-highlight))))
 
 (defun k8s--resource-labels (resource)
   "Return metadata.labels alist from RESOURCE."

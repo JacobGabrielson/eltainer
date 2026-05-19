@@ -163,7 +163,10 @@ or nil) and :line (current line number, fallback)."
 (defun docker--restore-point-context (ctx)
   "Re-seek point to the section matching CTX (from `docker--save-point-context').
 Tries the stable id first; falls back to the captured line number; final
-fallback is `point-min'."
+fallback is `point-min'.  Re-runs the `hl-line' overlay if the mode is
+on — the `erase-buffer' in the refresh wipes hl-line's overlay, and a
+timer-driven refresh isn't a command so `post-command-hook' doesn't fire
+to recreate it."
   (let ((id (plist-get ctx :id))
         (line (plist-get ctx :line))
         target)
@@ -182,7 +185,10 @@ fallback is `point-min'."
      (target (goto-char target))
      (line   (goto-char (point-min))
              (forward-line (max 0 (1- line))))
-     (t      (goto-char (point-min))))))
+     (t      (goto-char (point-min))))
+    (when (and (bound-and-true-p hl-line-mode)
+               (fboundp 'hl-line-highlight))
+      (hl-line-highlight))))
 
 (defun docker--generic-refresh (view-name items column-header line-fn)
   "Refresh buffer showing VIEW-NAME.
