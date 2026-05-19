@@ -81,20 +81,23 @@ oriented emulator is available (`eat` → `vterm` → `term`;
 
 | Key | Action |
 |-----|--------|
-| `?` | Dispatch menu (resource types) |
+| `?` | Dispatch menu (resource types + cluster switch) |
 | `g` | Refresh |
 | `N` | Switch namespace |
 | `w` | Toggle live watch (auto-update via the K8s watch API) |
+| `b` | Switch kubeconfig context (same picker as from the dashboard) |
 | `i` | Describe resource |
 | `l` | Tail pod logs (streamed) |
+| `e` | Interactive TTY exec into the pod (pods view only) |
+| `f` | Read-only filesystem browser for the pod (pods view only) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
 
 ### Switching contexts
 
-`b` on the dashboard enumerates every context across every
-discovered kubeconfig file (`$KUBECONFIG`, anything under
-`~/.kube` and `~/.kube/configs`, plus
+`b` (on the dashboard *or* any k8s view) enumerates every context
+across every discovered kubeconfig file (`$KUBECONFIG`, anything
+under `~/.kube` and `~/.kube/configs`, plus
 `eltainer-kubeconfig-extra-paths`).  Pick one and the dashboard
 flips immediately: any open `*k8s:…*` buffers are killed so they
 re-open against the new context the next time you visit them.

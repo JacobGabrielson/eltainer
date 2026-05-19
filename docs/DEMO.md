@@ -174,5 +174,6 @@ and a corresponding function in `demo-init.el`:
 - `i` describe-resource on a k8s row.
 - Image-pull progress (would need a fresh `docker rmi` before
   recording so the pull actually does work).
-- TTY exec into a k8s pod — not implemented yet (it's the natural
-  next consumer of `eltainer-terminal`).
+- `e` for interactive TTY exec into a k8s pod — scaffolded on the
+  `wip-k8s-tty-exec' branch, not yet on `main'.
+- `f` for the read-only pod filesystem browser.
