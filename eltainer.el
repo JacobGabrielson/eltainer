@@ -85,11 +85,10 @@ switch targets in the dashboard."
   :type '(repeat directory)
   :group 'eltainer)
 
-(defun eltainer--discover-kubeconfigs ()
-  "Return the de-duplicated list of kubeconfig paths to offer.
+(defun eltainer--discover-kubeconfig-files ()
+  "Return de-duplicated kubeconfig file paths from all known sources.
 Sources, in order: `$KUBECONFIG' (colon-separated), files in
-`eltainer-kubeconfig-search-dirs', and `eltainer-kubeconfig-extra-paths'.
-Only existing readable files are included."
+`eltainer-kubeconfig-search-dirs', and `eltainer-kubeconfig-extra-paths'."
   (let* ((env (getenv "KUBECONFIG"))
          (env-paths (and env (split-string env ":" t)))
          (dir-paths
@@ -110,20 +109,40 @@ Only existing readable files are included."
           (push full out))))
     (nreverse out)))
 
+(defun eltainer--discover-kubeconfigs ()
+  "Return all (FILE . CONTEXT-NAME) candidates across known files.
+Each file may contribute multiple entries (one per context).  The file's
+`current-context' is listed first, then any other contexts."
+  (cl-loop for file in (eltainer--discover-kubeconfig-files)
+           append (condition-case nil
+                      (let* ((cfg (k8s-config-load file))
+                             (default (k8s-config-current-context cfg))
+                             (names (mapcar #'k8s-context-name
+                                            (k8s-config-contexts cfg)))
+                             (ordered (if (and default (member default names))
+                                          (cons default (delete default
+                                                                (copy-sequence names)))
+                                        names)))
+                        (mapcar (lambda (ctx) (cons file ctx)) ordered))
+                    (error nil))))
+
 (defun eltainer--current-kubeconfig ()
-  "Return the path eltainer is currently pointed at for k8s, or nil."
+  "Return the kubeconfig path eltainer is pointed at, or nil."
   (or (bound-and-true-p k8s-kubeconfig-path)
       (let ((env (getenv "KUBECONFIG")))
         (and env (car (split-string env ":" t))))
       (let ((default (expand-file-name "~/.kube/config")))
         (and (file-readable-p default) default))))
 
-(defun eltainer--kubeconfig-context (path)
-  "Return the `current-context' string from PATH, or nil on any failure."
-  (when (and path (file-readable-p path))
-    (condition-case nil
-        (k8s-config-current-context (k8s-config-load path))
-      (error nil))))
+(defun eltainer--current-context (&optional path)
+  "Return the active context name for PATH (or the current kubeconfig).
+Honors `k8s-context-override' over the file's `current-context'."
+  (or (bound-and-true-p k8s-context-override)
+      (let ((p (or path (eltainer--current-kubeconfig))))
+        (when (and p (file-readable-p p))
+          (condition-case nil
+              (k8s-config-current-context (k8s-config-load p))
+            (error nil))))))
 
 (defun eltainer--kill-k8s-buffers ()
   "Kill every live `*k8s:…*' buffer so a kubeconfig switch is clean."
@@ -133,29 +152,37 @@ Only existing readable files are included."
         (ignore-errors (kill-buffer buf))))))
 
 (defun eltainer-switch-kubeconfig ()
-  "Switch the active k8s kubeconfig and refresh the dashboard.
-Like magit's branch switch (`b'), but for clusters.  Closes any open
-`*k8s:…*' buffers so they re-open against the new config."
+  "Switch the active k8s context and refresh the dashboard.
+Like magit's branch switch (`b'), but for clusters.  Enumerates every
+context across every discovered kubeconfig file; selecting one sets
+`k8s-kubeconfig-path' and `k8s-context-override' and kills any open
+`*k8s:…*' buffers so they re-open against the new context."
   (interactive)
-  (let* ((current (eltainer--current-kubeconfig))
+  (let* ((current-path (eltainer--current-kubeconfig))
+         (current-ctx (eltainer--current-context current-path))
          (candidates (eltainer--discover-kubeconfigs))
          (annotated
-          (mapcar (lambda (p)
-                    (let ((ctx (eltainer--kubeconfig-context p)))
-                      (cons (format "%s%s%s"
-                                    (abbreviate-file-name p)
-                                    (if ctx (format "  (%s)" ctx) "")
-                                    (if (equal p current) "  *current*" ""))
-                            p)))
+          (mapcar (lambda (pair)
+                    (let* ((file (car pair))
+                           (ctx (cdr pair))
+                           (label (format "%s — %s%s"
+                                          ctx
+                                          (abbreviate-file-name file)
+                                          (if (and (equal file current-path)
+                                                   (equal ctx current-ctx))
+                                              "  *current*" ""))))
+                      (cons label pair)))
                   candidates))
-         (choice (completing-read "Switch kubeconfig: " annotated nil t))
+         (choice (completing-read "Switch context: " annotated nil t))
          (target (cdr (assoc choice annotated))))
-    (unless target (user-error "No kubeconfig selected"))
-    (setq k8s-kubeconfig-path target)
+    (unless target (user-error "No context selected"))
+    (setq k8s-kubeconfig-path (car target)
+          k8s-context-override (cdr target))
     (eltainer--kill-k8s-buffers)
     (when (get-buffer "*eltainer*")
       (with-current-buffer "*eltainer*" (eltainer-refresh)))
-    (message "eltainer: switched to %s" (abbreviate-file-name target))))
+    (message "eltainer: switched to %s (%s)"
+             (cdr target) (abbreviate-file-name (car target)))))
 
 (define-derived-mode eltainer-mode magit-section-mode "Eltainer"
   "Dashboard for the unified docker + k8s frontend."
@@ -199,19 +226,16 @@ Like magit's branch switch (`b'), but for clusters.  Closes any open
                              '(help-echo "command unavailable (module not loaded)"))))))
 
 (defun eltainer--insert-active-kubeconfig ()
-  "Render a `Kubeconfig: PATH (context)' line with a hint about `b'."
+  "Render the active k8s context + kubeconfig and a `b' switch hint."
   (let* ((path (eltainer--current-kubeconfig))
-         (ctx (and path (eltainer--kubeconfig-context path))))
-    (insert (propertize "Kubeconfig:  " 'font-lock-face 'eltainer-dim))
-    (if path
-        (progn
-          (insert (propertize (abbreviate-file-name path)
-                              'font-lock-face 'eltainer-resource-name))
-          (when ctx
-            (insert (propertize (format " (%s)" ctx)
-                                'font-lock-face 'eltainer-resource-secondary))))
-      (insert (propertize "(none — set k8s-kubeconfig-path or $KUBECONFIG)"
-                          'font-lock-face 'eltainer-dim)))
+         (ctx (eltainer--current-context path)))
+    (insert (propertize "Context:     " 'font-lock-face 'eltainer-dim))
+    (if ctx
+        (insert (propertize ctx 'font-lock-face 'eltainer-resource-name))
+      (insert (propertize "(unset)" 'font-lock-face 'eltainer-dim)))
+    (when path
+      (insert (propertize (format "  —  %s" (abbreviate-file-name path))
+                          'font-lock-face 'eltainer-resource-secondary)))
     (insert (propertize "    [b] switch\n\n"
                         'font-lock-face 'eltainer-dim))))
 

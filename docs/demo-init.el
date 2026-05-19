@@ -1,15 +1,15 @@
-;;; demo-init.el --- Scripted demo of eltainer (docker + k8s) -*- lexical-binding: t -*-
+;;; demo-init.el --- Scripted demo of eltainer (docker + k8s + switch) -*- lexical-binding: t -*-
 ;;
-;; Drives a single asciinema-recordable scenario that exercises BOTH
-;; backends in one Emacs session:
+;; Drives a single asciinema-recordable scenario covering all three
+;; pillars of the post-merge eltainer UI:
 ;;
-;;   1. `M-x eltainer'    — dashboard listing both backends
+;;   1. `M-x eltainer'    — dashboard listing both backends + active context
 ;;   2. `c'               — docker containers view
 ;;   3. move to eldocker-ticker, `e' → RET → /bin/sh in the container
 ;;   4. run a few shell commands; exit the shell
-;;   5. switch back to the dashboard
-;;   6. `k'               — kubernetes pods view (against the test kind cluster)
-;;   7. let the page render so the magit-section pods listing is visible
+;;   5. back to the dashboard, press `b' to switch k8s context
+;;   6. pick the kind cluster from the context picker
+;;   7. press `k' — kubernetes pods view, now showing the kind cluster
 ;;   8. kill emacs so asciinema's `rec --command' terminates
 ;;
 ;; Invoked by docs/record-demo.sh.
@@ -26,10 +26,11 @@
 (add-to-list 'load-path demo--repo-root)
 (require 'eltainer)
 
-;; Point the k8s side at the test cluster fixture so we don't depend on
-;; the user's real kubeconfig.
-(setq k8s-kubeconfig-path
-      (expand-file-name "test/k8s/test-kubeconfig.yaml" demo--repo-root))
+;; Use the real ~/.kube/config so both docker-desktop and kind-eltainer-demo
+;; are visible to the `b' switcher.
+(setq k8s-kubeconfig-path (expand-file-name "~/.kube/config"))
+;; Start on docker-desktop so the switch in the demo is visible.
+(setq k8s-context-override "docker-desktop")
 
 ;; Minimal cosmetic setup so the recording is uncluttered.
 (setq inhibit-startup-screen t
@@ -86,10 +87,24 @@
         (ignore-errors (kill-buffer buf))))))
 
 (defun demo--k8s-segment ()
-  "Phase 2: dashboard → k8s pods."
+  "Phase 2: dashboard shows current context → switch via `b' → pods view."
   (eltainer)                                ; back to dashboard
-  (sit-for 1.4)
-  (demo--press "k" 0.4)                     ; → k8s pods
+  (sit-for 1.6)                             ; viewer sees Context line
+  ;; Switch context: simulate `b' selecting the kind cluster.
+  ;; The collection passed to completing-read is the annotated alist;
+  ;; we just need to return the matching label string.
+  (cl-letf (((symbol-function 'completing-read)
+             (lambda (_prompt coll &rest _)
+               (let ((labels (if (and (consp coll) (consp (car coll)))
+                                 (mapcar #'car coll)
+                               coll)))
+                 (or (cl-find-if (lambda (s)
+                                   (string-match-p "kind-eltainer-demo" s))
+                                 labels)
+                     (car labels))))))
+    (call-interactively #'eltainer-switch-kubeconfig))
+  (sit-for 1.8)                             ; viewer sees the new Context line
+  (demo--press "k" 0.4)                     ; → k8s pods on the kind cluster
   (let ((deadline (+ (float-time) 8.0))
         (buf nil))
     (while (and (< (float-time) deadline)
@@ -98,7 +113,7 @@
     (when buf
       (with-current-buffer buf
         (goto-char (point-min))
-        (sit-for 2.8))))                    ; let viewer read the pods
+        (sit-for 2.8))))
   (sit-for 0.5))
 
 (defun demo--run ()

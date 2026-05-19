@@ -296,9 +296,19 @@ Returns a `k8s-config' struct."
   (cl-find name (k8s-config-users config)
            :key #'k8s-user-name :test #'string=))
 
+(defvar k8s-context-override nil
+  "When non-nil, override the kubeconfig's `current-context'.
+Set this to a context name string to make the resolution layer
+pretend that's the active context instead of whatever the file says.
+`eltainer-switch-kubeconfig' uses this so a single kubeconfig holding
+multiple contexts can be switched between without rewriting the file.")
+
 (defun k8s-config-resolve-context (config)
-  "Return the current context struct from CONFIG."
-  (k8s-config-get-context config (k8s-config-current-context config)))
+  "Return the active context struct from CONFIG.
+Honors `k8s-context-override' when set."
+  (k8s-config-get-context config
+                          (or k8s-context-override
+                              (k8s-config-current-context config))))
 
 (defun k8s-config-resolve-cluster (config)
   "Return the cluster struct for CONFIG's current context."
