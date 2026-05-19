@@ -26,11 +26,12 @@
 (add-to-list 'load-path demo--repo-root)
 (require 'eltainer)
 
-;; Use the real ~/.kube/config so both docker-desktop and kind-eltainer-demo
-;; are visible to the `b' switcher.
-(setq k8s-kubeconfig-path (expand-file-name "~/.kube/config"))
-;; Start on docker-desktop so the switch in the demo is visible.
-(setq k8s-context-override "docker-desktop")
+;; Discovery already scans ~/.kube and ~/.kube/configs/ (see
+;; `eltainer-kubeconfig-search-dirs').  Pin the initial context to
+;; microk8s so the switch to kind-eltainer-test in the demo is visible.
+(setq k8s-kubeconfig-path
+      (expand-file-name "~/.kube/configs/config-microk8s"))
+(setq k8s-context-override "microk8s")
 
 ;; Minimal cosmetic setup so the recording is uncluttered.
 (setq inhibit-startup-screen t
@@ -52,19 +53,35 @@
   (execute-kbd-macro (kbd key))
   (sit-for (or pause 0.6)))
 
+(defun demo--goto-container (name)
+  "Move point to the magit-section heading of the container named NAME.
+Walks sections rather than text-searching the buffer so we land on
+the actual `docker-container' section instead of, say, a `Command:'
+line that happens to contain NAME."
+  (goto-char (point-min))
+  (let (target)
+    (while (and (not target) (not (eobp)))
+      (let ((sec (get-text-property (point) 'magit-section)))
+        (when sec
+          (let ((val (ignore-errors (oref sec value))))
+            (when (and (docker-container-p val)
+                       (equal (docker-container-name val) name))
+              (setq target (point))))))
+      (forward-line 1))
+    (when target (goto-char target))
+    target))
+
 (defun demo--docker-segment ()
   "Phase 1: dashboard → containers → exec."
   (eltainer)                                ; dashboard
   (sit-for 2.0)
   (demo--press "c" 1.5)                     ; → docker containers
-  (with-current-buffer "*docker:containers*"
-    (goto-char (point-min))
-    (when (re-search-forward "eltainer-ticker" nil t)
-      (beginning-of-line)
-      (forward-char 2))
-    (sit-for 0.8)
-    (demo--press "e" 0.4)                   ; exec into container
-    (demo--press "RET" 0.4))                ; accept "/bin/sh" default
+  (pop-to-buffer "*docker:containers*")
+  (unless (demo--goto-container "eltainer-ticker")
+    (error "demo: `eltainer-ticker' container not found in buffer"))
+  (sit-for 0.8)
+  (demo--press "e" 0.4)                     ; exec into container
+  (demo--press "RET" 0.4)                   ; accept "/bin/sh" default
   (let ((deadline (+ (float-time) 5.0))
         (buf nil))
     (while (and (< (float-time) deadline)
@@ -89,19 +106,17 @@
   "Phase 2: dashboard shows current context → switch via `b' → pods view."
   (eltainer)                                ; back to dashboard
   (sit-for 1.6)                             ; viewer sees Context line
-  ;; Switch context: simulate `b' selecting the kind cluster.
-  ;; The collection passed to completing-read is the annotated alist;
-  ;; we just need to return the matching label string.
-  (cl-letf (((symbol-function 'completing-read)
-             (lambda (_prompt coll &rest _)
-               (let ((labels (if (and (consp coll) (consp (car coll)))
-                                 (mapcar #'car coll)
-                               coll)))
-                 (or (cl-find-if (lambda (s)
-                                   (string-match-p "kind-eltainer-demo" s))
-                                 labels)
-                     (car labels))))))
-    (call-interactively #'eltainer-switch-kubeconfig))
+  ;; Press `b' to open the context picker; visible to the viewer.
+  (demo--press "b" 1.0)
+  (let ((picker (get-buffer "*eltainer:contexts*")))
+    (when picker
+      (pop-to-buffer picker)
+      (with-current-buffer picker
+        (goto-char (point-min))
+        (when (re-search-forward "kind-eltainer-test" nil t)
+          (beginning-of-line)))
+      (sit-for 1.0)
+      (demo--press "RET" 0.4)))
   (sit-for 1.8)                             ; viewer sees the new Context line
   (demo--press "k" 0.4)                     ; → k8s pods on the kind cluster
   (let ((deadline (+ (float-time) 8.0))
@@ -116,9 +131,21 @@
   (sit-for 0.5))
 
 (defun demo--run ()
-  (demo--docker-segment)
-  (demo--k8s-segment)
-  (kill-emacs 0))
+  (condition-case err
+      (progn
+        (demo--docker-segment)
+        (demo--k8s-segment)
+        (kill-emacs 0))
+    (error
+     (message "demo: aborting on error: %S" err)
+     (sit-for 1.5)
+     (kill-emacs 1))))
+
+;; Hard deadline so a hung demo doesn't leave asciinema parked forever.
+(run-at-time 60 nil
+             (lambda ()
+               (message "demo: hard timeout, killing")
+               (kill-emacs 2)))
 
 (run-at-time 0.3 nil #'demo--run)
 

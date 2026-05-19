@@ -114,6 +114,49 @@ Called with one optional arg (namespace), returns a path string.")
   "Return metadata.creationTimestamp from RESOURCE."
   (cdr (assq 'creationTimestamp (cdr (assq 'metadata resource)))))
 
+(defun k8s--resource-uid (resource)
+  "Return metadata.uid from RESOURCE — a stable identity across refreshes."
+  (cdr (assq 'uid (cdr (assq 'metadata resource)))))
+
+(defun k8s--section-stable-id (value)
+  "Return a stable identity (string) for the k8s section VALUE, or nil.
+For resource alists, the metadata.uid; for namespace-group sections
+the namespace name (a string).  Used so refreshes can put point back
+on the same row instead of jumping to the top."
+  (cond
+   ((null value) nil)
+   ((stringp value) (concat "ns:" value))    ; namespace group header
+   ((listp value)   (k8s--resource-uid value))))
+
+(defun k8s--save-point-context ()
+  "Capture state about point so we can re-seek the same row after refresh."
+  (let* ((sec (magit-current-section))
+         (val (and sec (ignore-errors (oref sec value)))))
+    (list :id   (k8s--section-stable-id val)
+          :line (line-number-at-pos))))
+
+(defun k8s--restore-point-context (ctx)
+  "Re-seek to the section matching CTX (from `k8s--save-point-context')."
+  (let ((id (plist-get ctx :id))
+        (line (plist-get ctx :line))
+        target)
+    (when id
+      (save-excursion
+        (goto-char (point-min))
+        (while (and (not target) (not (eobp)))
+          (let ((sec (get-text-property (point) 'magit-section)))
+            (when sec
+              (let ((sid (k8s--section-stable-id
+                          (ignore-errors (oref sec value)))))
+                (when (equal sid id)
+                  (setq target (point))))))
+          (forward-line 1))))
+    (cond
+     (target (goto-char target))
+     (line   (goto-char (point-min))
+             (forward-line (max 0 (1- line))))
+     (t      (goto-char (point-min))))))
+
 (defun k8s--resource-labels (resource)
   "Return metadata.labels alist from RESOURCE."
   (cdr (assq 'labels (cdr (assq 'metadata resource)))))
@@ -567,6 +610,7 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
 API-FN fetches items, COLUMN-HEADER is the column titles string,
 LINE-FN inserts one item as a section."
   (let* ((inhibit-read-only t)
+         (ctx (k8s--save-point-context))
          (conn (k8s--ensure-connection))
          (items (if (and k8s--resource-table
                          (> (hash-table-count k8s--resource-table) 0))
@@ -589,7 +633,7 @@ LINE-FN inserts one item as a section."
           (insert "\n"))))
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))
-    (goto-char (point-min))))
+    (k8s--restore-point-context ctx)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; View definition macro

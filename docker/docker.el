@@ -136,12 +136,61 @@ Set this to a `docker-config' struct to bypass environment detection."
 ;;; ---------------------------------------------------------------------------
 ;;; Generic refresh engine
 
+(defun docker--section-stable-id (value)
+  "Return a stable identity (string) for the docker section VALUE, or nil.
+Containers / images / networks all carry an `id' field; values
+without one fall back to their `name'.  Used so refreshes can put
+point back on the same row instead of jumping to the top."
+  (cond
+   ((null value) nil)
+   ((not (recordp value)) nil)
+   ((and (fboundp 'docker-container-p) (docker-container-p value))
+    (docker-container-id value))
+   ((and (fboundp 'docker-image-p) (docker-image-p value))
+    (docker-image-id value))
+   ((and (fboundp 'docker-network-p) (docker-network-p value))
+    (docker-network-id value))))
+
+(defun docker--save-point-context ()
+  "Capture enough state about point to re-seek the same row after refresh.
+Returns a plist with :id (a stable identity per `docker--section-stable-id'
+or nil) and :line (current line number, fallback)."
+  (let* ((sec (magit-current-section))
+         (val (and sec (ignore-errors (oref sec value)))))
+    (list :id   (docker--section-stable-id val)
+          :line (line-number-at-pos))))
+
+(defun docker--restore-point-context (ctx)
+  "Re-seek point to the section matching CTX (from `docker--save-point-context').
+Tries the stable id first; falls back to the captured line number; final
+fallback is `point-min'."
+  (let ((id (plist-get ctx :id))
+        (line (plist-get ctx :line))
+        target)
+    (when id
+      (save-excursion
+        (goto-char (point-min))
+        (while (and (not target) (not (eobp)))
+          (let ((sec (get-text-property (point) 'magit-section)))
+            (when sec
+              (let ((sid (docker--section-stable-id
+                          (ignore-errors (oref sec value)))))
+                (when (equal sid id)
+                  (setq target (point))))))
+          (forward-line 1))))
+    (cond
+     (target (goto-char target))
+     (line   (goto-char (point-min))
+             (forward-line (max 0 (1- line))))
+     (t      (goto-char (point-min))))))
+
 (defun docker--generic-refresh (view-name items column-header line-fn)
   "Refresh buffer showing VIEW-NAME.
 ITEMS is a vector of structs.  COLUMN-HEADER is a string rendered
 above the rows (nil to omit).  LINE-FN inserts one item as a
 section."
-  (let* ((inhibit-read-only t))
+  (let* ((inhibit-read-only t)
+         (ctx (docker--save-point-context)))
     (erase-buffer)
     (setq header-line-format nil)
     (magit-insert-section (docker-root)
@@ -153,7 +202,7 @@ section."
       (insert "\n"))
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))
-    (goto-char (point-min))))
+    (docker--restore-point-context ctx)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Container view

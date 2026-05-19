@@ -116,6 +116,7 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
 (defun k8s--pods-refresh ()
   "Refresh the pods buffer content."
   (let* ((inhibit-read-only t)
+         (ctx (k8s--save-point-context))
          (conn (k8s--ensure-connection))
          (pods (if (and k8s--resource-table
                         (> (hash-table-count k8s--resource-table) 0))
@@ -140,7 +141,7 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
     ;; Cascade visibility: creates overlays for hidden sections
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))
-    (goto-char (point-min))))
+    (k8s--restore-point-context ctx)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Pod log viewer

@@ -35,8 +35,19 @@ API server; both share the same transport now."
 ;;; Environment detection
 
 (defun docker--detect-socket ()
-  "Return the Docker Unix socket path from env or default."
+  "Return the Docker Unix socket path from env or default.
+Probes, in order: DOCKER_HOST env var, rootless-docker's
+`$XDG_RUNTIME_DIR/docker.sock' (the default on Linux rootless
+installs), `/run/user/$UID/docker.sock' (same path under a different
+spelling — XDG isn't always set in subprocesses), the rootful default
+`/var/run/docker.sock', and `~/.docker/docker.sock' (Docker Desktop)."
   (or (getenv "DOCKER_HOST")
+      (let ((xdg (getenv "XDG_RUNTIME_DIR")))
+        (when xdg
+          (let ((p (expand-file-name "docker.sock" xdg)))
+            (when (file-exists-p p) p))))
+      (let ((p (format "/run/user/%d/docker.sock" (user-uid))))
+        (when (file-exists-p p) p))
       (when (file-exists-p "/var/run/docker.sock")
         "/var/run/docker.sock")
       (when (file-exists-p (expand-file-name "~/.docker/docker.sock"))

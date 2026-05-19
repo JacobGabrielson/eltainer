@@ -34,19 +34,38 @@ export DOCKER_CLI_HINTS=false
 # `stty rows … cols …' inside it sets the dimensions (asciinema's own
 # --cols/--rows flags only stamp the cast metadata, they don't resize
 # the PTY).
-script -q /dev/null sh -c "
-  stty rows 30 cols 100
-  export TERM=xterm-256color
-  asciinema rec \
-    --overwrite \
-    --cols 100 --rows 30 \
-    --idle-time-limit 1.5 \
-    --command \"TERM=xterm-256color emacs -nw -Q -l '$here/demo-init.el'\" \
-    '$cast'
-"
+#
+# BSD `script' (macOS) takes the typescript file as the first
+# positional and the command after; util-linux `script' (Linux) takes
+# the file last and the command via `-c'.  We detect at runtime.
+if script --help 2>&1 | grep -q -- '--command'; then
+  # util-linux
+  script -q -c "
+    stty rows 30 cols 100
+    export TERM=xterm-256color
+    asciinema rec \
+      --overwrite \
+      --cols 100 --rows 30 \
+      --idle-time-limit 1.5 \
+      --command \"TERM=xterm-256color emacs -nw -Q -l '$here/demo-init.el'\" \
+      '$cast'
+  " /dev/null
+else
+  # BSD
+  script -q /dev/null sh -c "
+    stty rows 30 cols 100
+    export TERM=xterm-256color
+    asciinema rec \
+      --overwrite \
+      --cols 100 --rows 30 \
+      --idle-time-limit 1.5 \
+      --command \"TERM=xterm-256color emacs -nw -Q -l '$here/demo-init.el'\" \
+      '$cast'
+  "
+fi
 
 agg \
-  --text-font-family "Menlo" \
+  --text-font-family "Menlo,JetBrains Mono,DejaVu Sans Mono,Liberation Mono" \
   --font-size 16 \
   --line-height 1.3 \
   --speed 1.0 \
