@@ -235,45 +235,13 @@ q to cancel."
   (setq-local revert-buffer-function
               (lambda (_ignore-auto _noconfirm) (eltainer-refresh))))
 
-(defun eltainer--current-group-name ()
-  "Return the dashboard backend label (\"Docker\"/\"Kubernetes\") for point,
-or nil if point isn't inside any backend section."
-  (let ((sec (magit-current-section))
-        (groups (mapcar #'car eltainer-views)))
-    (while (and sec (not (member (oref sec value) groups)))
-      (setq sec (and (slot-boundp sec 'parent) (oref sec parent))))
-    (and sec (oref sec value))))
-
-(defun eltainer--launch-key (key)
-  "Fire the launcher for KEY in whichever backend section point is in.
-If point isn't inside any backend section, the key is ambiguous and we
-fire the first match across all backends (lets the user act on the
-buffer-as-a-whole when not yet on a row)."
-  (let* ((group (eltainer--current-group-name))
-         (entries (if group
-                      (cdr (assoc group eltainer-views))
-                    (apply #'append (mapcar #'cdr eltainer-views))))
-         (entry (cl-find key entries :key #'car :test #'string=)))
-    (cond
-     (entry (call-interactively (nth 2 entry)))
-     (group
-      (user-error "%s has no action in the %s section" key group))
-     (t
-      (user-error "%s is not bound" key)))))
-
 (defun eltainer--bind-launchers ()
-  "Wire each entry's KEY to a section-aware launcher.
-Same key reused across backends is fine — the launcher checks which
-section point is in and dispatches accordingly."
-  (let ((seen nil))
-    (dolist (group eltainer-views)
-      (dolist (entry (cdr group))
-        (let ((key (nth 0 entry)))
-          (unless (member key seen)
-            (push key seen)
-            (keymap-set eltainer-mode-map key
-                        (let ((k key))
-                          (lambda () (interactive) (eltainer--launch-key k))))))))))
+  "Wire each entry's KEY to its COMMAND in the dashboard keymap."
+  (dolist (group eltainer-views)
+    (dolist (entry (cdr group))
+      (let ((key (nth 0 entry))
+            (cmd (nth 2 entry)))
+        (keymap-set eltainer-mode-map key cmd)))))
 
 (defun eltainer--insert-entry (entry)
   "Insert one dashboard row for ENTRY (KEY LABEL COMMAND)."
