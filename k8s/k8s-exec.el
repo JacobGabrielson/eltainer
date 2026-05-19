@@ -14,10 +14,51 @@
 ;; remote process's EXIT-CODE, STATUS, and MESSAGE.
 
 (require 'cl-lib)
+(require 'gnutls)
 (require 'json)
 (require 'url-util)
+(require 'docker-config)
 (require 'k8s-config)
 (require 'k8s-api)
+
+;;; ---------------------------------------------------------------------------
+;;; TLS connection helper
+;;
+;; `open-network-stream :type 'tls' silently returns nil when the GnuTLS
+;; handshake fails (no client cert presented during a 1.3 handshake bites
+;; us here, even with `gnutls-algorithm-priority' bound).  We mirror the
+;; pattern in `docker-http--connect': `make-network-process' with
+;; explicit `:tls-parameters' built from `gnutls-boot-parameters', and
+;; `:keylist' in (KEY CERT) order (reversing yields TLS error -56).
+
+(defun k8s-exec--open-tls (name buf conn)
+  "Open a TLS network process named NAME with BUF, using CONN's TLS params."
+  (let* ((host (k8s-connection-host conn))
+         (port (k8s-connection-port conn))
+         (cfg (k8s-connection-docker-cfg conn))
+         (ca-file (docker-config-tls-ca-cert cfg))
+         (cert-file (docker-config-tls-cert cfg))
+         (key-file  (docker-config-tls-key  cfg))
+         (priority (docker-config-tls-priority cfg))
+         (gnutls-algorithm-priority (or priority gnutls-algorithm-priority))
+         ;; Self-signed cluster certs: skip chain/SAN verification.  The
+         ;; client cert is what we authenticate with.
+         (gnutls-verify-error nil))
+    (make-network-process
+     :name name
+     :buffer buf
+     :host host
+     :service port
+     :coding '(binary . binary)
+     :nowait nil
+     :tls-parameters
+     (cons 'gnutls-x509pki
+           (gnutls-boot-parameters
+            :type 'gnutls-x509pki
+            :hostname host
+            :trustfiles (when ca-file (list ca-file))
+            :keylist (when (and cert-file key-file)
+                       (list (list key-file cert-file))))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Result struct
@@ -238,26 +279,20 @@ Signals an error if the connection or WebSocket handshake fails."
   (let* ((host (k8s-connection-host conn))
          (port (k8s-connection-port conn))
          (path (k8s-exec--build-path ns pod container command))
-         (cert-file (k8s-connection-client-cert-file conn))
-         (key-file (k8s-connection-client-key-file conn))
          (token (k8s-user-token (k8s-connection-user conn)))
          (ws-key (k8s-exec--ws-key))
-         (gnutls-verify-error nil)
-         (gnutls-algorithm-priority k8s-tls-priority)
          (buf (generate-new-buffer " *k8s-exec*"))
-         (proc (apply #'open-network-stream "k8s-exec" buf host port
-                      :type 'tls
-                      (when (and cert-file key-file)
-                        (list :client-certificate
-                              (list key-file cert-file)))))
+         (proc (condition-case err
+                   (k8s-exec--open-tls "k8s-exec" buf conn)
+                 (error
+                  (kill-buffer buf)
+                  (error "k8s-exec: failed to connect to %s:%d (%s)"
+                         host port (error-message-string err)))))
          (sess (k8s-exec--session-new
                 :process proc
                 :raw ""
                 :stdout-chunks nil
                 :stderr-chunks nil)))
-    (unless proc
-      (kill-buffer buf)
-      (error "k8s-exec: failed to connect to %s:%d" host port))
     (set-process-coding-system proc 'binary 'binary)
     (set-process-query-on-exit-flag proc nil)
     (set-process-filter proc (lambda (p d) (k8s-exec--filter sess p d)))
@@ -485,30 +520,25 @@ buffer; the WebSocket connection drives both display and stdin."
          (host (k8s-connection-host conn))
          (port (k8s-connection-port conn))
          (path (k8s-exec-interactive--build-path ns pod container command))
-         (cert-file (k8s-connection-client-cert-file conn))
-         (key-file (k8s-connection-client-key-file conn))
          (token (k8s-user-token (k8s-connection-user conn)))
          (ws-key (k8s-exec--ws-key))
          (bufname (format "*k8s:exec:%s/%s%s*" ns pod
                           (if container (format ":%s" container) "")))
          (term-buf (eltainer-terminal-open bufname))
-         (gnutls-verify-error nil)
-         (gnutls-algorithm-priority k8s-tls-priority)
          ;; Use a separate hidden buffer for the raw network process —
          ;; the eltainer-terminal buffer is where rendered output goes.
          (sock-buf (generate-new-buffer " *k8s-exec-itty*"))
-         (proc (apply #'open-network-stream "k8s-exec-itty" sock-buf host port
-                      :type 'tls
-                      (when (and cert-file key-file)
-                        (list :client-certificate (list key-file cert-file)))))
+         (proc (condition-case err
+                   (k8s-exec--open-tls "k8s-exec-itty" sock-buf conn)
+                 (error
+                  (kill-buffer sock-buf)
+                  (error "k8s-exec-interactive: failed to connect to %s:%d (%s)"
+                         host port (error-message-string err)))))
          (itty (k8s-exec--itty-new
                 :process proc
                 :buffer term-buf
                 :raw ""
                 :exec-id-conn conn)))
-    (unless proc
-      (kill-buffer sock-buf)
-      (error "k8s-exec-interactive: failed to connect to %s:%d" host port))
     (set-process-coding-system proc 'binary 'binary)
     (set-process-query-on-exit-flag proc nil)
     (set-process-filter   proc (lambda (p d) (k8s-exec-interactive--filter itty p d)))

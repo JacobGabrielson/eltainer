@@ -13,6 +13,9 @@ dist/
 # Local tooling state
 .claude/
 
+# Scratch dir for agents / experiments (see CLAUDE.md)
+/tmp/
+
 # Backup files
 *~
 

@@ -73,9 +73,9 @@ dashboard if that's what you want.
 | `j` `J` | Join / leave a network |
 
 Views auto-refresh as the daemon's `/events` stream tells us what
-changed (debounced).  The TTY exec lands in whichever screen-
-oriented emulator is available (`eat` → `vterm` → `term`;
-`M-x customize-variable eltainer-terminal-backend` to override).
+changed (debounced).  The TTY exec lands in an
+[`eat`](https://codeberg.org/akib/emacs-eat) buffer — eat is a hard
+dependency (see [Requirements](#requirements)).
 
 ### Inside the k8s view
 
@@ -108,7 +108,7 @@ Same muscle memory as `b` in magit for branches.
 ```
 eltainer.el              Dashboard + `M-x eltainer'
 eltainer-ui.el           Shared faces, age-string, describe-value
-eltainer-terminal.el     Terminal backend selector: eat → vterm → term
+eltainer-terminal.el     eat-backed terminal host for interactive exec
 eltainer-shell-helper.el Invoke external helpers (cred / exec plugins)
 reload.el                Dev helper: byte-compile + reload both halves
 
@@ -144,13 +144,21 @@ k8s/
   target, GnuTLS (`gnutls-available-p`).  eltainer refuses to load
   without the former and refuses to TLS-connect without the latter.
 - `magit-section`, `transient`.
+- [`eat`](https://codeberg.org/akib/emacs-eat) (`M-x package-install
+  RET eat RET` from MELPA / NonGNU ELPA).  Pure-Elisp xterm emulator;
+  the sole supported terminal backend for `e` (interactive exec) in
+  both Docker and Kubernetes views.  `eltainer-terminal.el` refuses
+  to load without it.
+
+  Why insist on eat?  The docker-exec and k8s-exec paths feed bytes
+  through a custom process filter (HTTP-Upgrade hijack for Docker,
+  WebSocket framing for Kubernetes).  built-in `term-mode` only
+  renders bytes from an Emacs subprocess's stdout, and `vterm`
+  doesn't expose a clean byte-injection seam — both silently no-op
+  in this codebase.  eat does the right thing
+  (`eat-term-process-output`) and is pure-Elisp, so it's a no-cost
+  dep.
 - A running Docker daemon and / or a kubeconfig.
-- Optional but recommended for TTY exec:
-  [`eat`](https://codeberg.org/akib/emacs-eat) (`M-x package-install
-  eat`, pure-elisp) or
-  [`vterm`](https://github.com/akermu/emacs-libvterm) (compiled
-  module).  Falls back to built-in `term-mode` if neither is
-  present.
 
 ## Quick start
 

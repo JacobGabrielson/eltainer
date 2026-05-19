@@ -27,9 +27,7 @@
     "docker-auth"
     "docker-pull"
     "docker")
-  "Docker-side modules in load order (dependencies first).
-`eltainer-terminal' used to live here as `docker-terminal'; it's now
-loaded at the top level alongside `eltainer-ui'.")
+  "Docker-side modules in load order (dependencies first).")
 
 (defconst eltainer-k8s-modules
   '("k8s-config"
