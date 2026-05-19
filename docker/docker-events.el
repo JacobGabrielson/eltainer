@@ -46,25 +46,44 @@
         (docker-events--schedule s refresh)))))
 
 (defun docker-events--schedule (sub refresh)
-  "Debounced fire of REFRESH against SUB's buffer."
+  "Debounced fire of REFRESH against SUB's buffer.
+
+The actual REFRESH call is always deferred to `run-at-time' (with a
+0s delay on the fast path, or the remaining debounce interval
+otherwise) — *never* called synchronously from this function.
+
+Why?  REFRESH does HTTP calls that block on `accept-process-output',
+and `docker-events--schedule' is invoked from inside the /events
+stream's process filter.  Calling REFRESH inline means
+`accept-process-output' inside the refresh dispatches the next
+/events chunk, which re-enters this dispatcher, which calls REFRESH
+again, blowing `max-lisp-eval-depth' under bursty event traffic
+(e.g. when the user kills several containers at once)."
   (let ((buf (nth 0 sub))
         (last (nth 3 sub))
         (timer (nth 4 sub))
         (now (float-time)))
     (when (timerp timer) (cancel-timer timer))
-    (if (or (null last) (> (- now last) docker-events-debounce-seconds))
-        (progn
-          (setf (nth 3 sub) now)
-          (when (buffer-live-p buf)
-            (with-current-buffer buf (funcall refresh))))
-      (let ((delay (max 0.05
-                        (- docker-events-debounce-seconds (- now last)))))
-        (setf (nth 4 sub)
-              (run-at-time delay nil
-                           (lambda ()
-                             (when (buffer-live-p buf)
-                               (setf (nth 3 sub) (float-time))
-                               (with-current-buffer buf (funcall refresh))))))))))
+    (let ((delay (cond
+                  ((or (null last)
+                       (> (- now last) docker-events-debounce-seconds))
+                   0)
+                  (t (max 0.05
+                          (- docker-events-debounce-seconds
+                             (- now last)))))))
+      (setf (nth 4 sub)
+            (run-at-time delay nil
+                         (lambda ()
+                           (when (buffer-live-p buf)
+                             (setf (nth 3 sub) (float-time))
+                             (setf (nth 4 sub) nil)
+                             (with-current-buffer buf
+                               (condition-case err
+                                   (funcall refresh)
+                                 (error
+                                  (message
+                                   "docker-events: refresh failed in %s: %S"
+                                   (buffer-name buf) err)))))))))))
 
 (defun docker-events--ensure-stream (cfg)
   "Make sure a /events stream is running against CFG."
