@@ -275,17 +275,48 @@ TAIL-LINES bounds the initial history (default 500)."
            (conn (k8s--ensure-connection)))
       (k8s-pod-browse conn ns name container "/"))))
 
+(defun k8s-pod-exec-at-point ()
+  "Open an interactive TTY exec into the pod at point.
+For multi-container pods, prompts for the container; for single-
+container pods, uses the only one.  Defaults to `/bin/sh' as the
+command — pass a prefix arg to enter a different one."
+  (interactive)
+  (require 'k8s-exec)
+  (let ((section (magit-current-section)))
+    (unless (and section (eq (oref section type) 'pod))
+      (user-error "Not on a pod"))
+    (let* ((pod (oref section value))
+           (name (k8s--resource-name pod))
+           (ns (k8s--resource-namespace pod))
+           (containers (k8s--pod-container-names pod))
+           (container (cond
+                       ((null containers) nil)
+                       ((= 1 (length containers)) (car containers))
+                       (t (completing-read
+                           (format "Container in %s/%s: " ns name)
+                           containers nil t nil nil (car containers)))))
+           (cmd (split-string-shell-command
+                 (if current-prefix-arg
+                     (read-shell-command (format "Exec in %s/%s: " ns name)
+                                         "/bin/sh")
+                   "/bin/sh")))
+           (conn (k8s--ensure-connection)))
+      (k8s-exec-interactive conn ns name container cmd))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Major mode
 
 (defvar-keymap k8s-pods-mode-map
-  :parent magit-section-mode-map
-  "l" #'k8s-pod-view-logs
-  "b" #'k8s-pod-browse-at-point)
+  :parent magit-section-mode-map)
 
+;; Pull in shared k8s view keys (RET, d, i, w, N, b context switch, ?, g, q)
+;; first, then add pod-specific keys on top so locals can override common.
 (map-keymap (lambda (key def)
               (keymap-set k8s-pods-mode-map (key-description (vector key)) def))
             k8s-common-map)
+(keymap-set k8s-pods-mode-map "l" #'k8s-pod-view-logs)
+(keymap-set k8s-pods-mode-map "e" #'k8s-pod-exec-at-point)
+(keymap-set k8s-pods-mode-map "f" #'k8s-pod-browse-at-point)
 
 (define-derived-mode k8s-pods-mode magit-section-mode "K8s:Pods"
   "Major mode for viewing Kubernetes pods.

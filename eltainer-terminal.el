@@ -187,6 +187,29 @@ available.  The other values force a specific backend."
         (cons (window-body-height win) (window-body-width win))
       (cons 24 80))))
 
+(defun eltainer-terminal-set-input-fn (buffer send-fn)
+  "Route keystrokes typed in BUFFER's terminal through SEND-FN.
+SEND-FN takes one string argument and is responsible for getting
+those bytes to the remote.  Use this when the underlying process
+expects framed I/O (e.g. WebSocket-encoded channel-0 frames for
+Kubernetes exec) rather than the raw bytes `eltainer-terminal-bind'
+defaults to."
+  (with-current-buffer buffer
+    (pcase (buffer-local-value 'eltainer-terminal--backend buffer)
+      ('eat
+       (eat-term-set-parameter
+        eat-terminal 'input-function
+        (lambda (_term str) (funcall send-fn str))))
+      ('term
+       (setq-local term-input-sender
+                   (lambda (_proc str) (funcall send-fn str))))
+      ('vterm
+       ;; vterm pipes input through `vterm--write-input' on a process.
+       ;; Custom-routing input through vterm is fiddly; fall back to
+       ;; eat or term for paths that need a custom send-fn.
+       (user-error
+        "eltainer-terminal-set-input-fn: vterm input redirection NYI; pin `eltainer-terminal-backend' to `eat or `term")))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Backward-compatible aliases
 ;;

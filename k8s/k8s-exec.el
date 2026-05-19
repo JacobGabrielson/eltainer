@@ -320,5 +320,238 @@ Signals an error if the connection or WebSocket handshake fails."
        :status status
        :message message))))
 
+;;; ---------------------------------------------------------------------------
+;;; Interactive TTY exec
+;;
+;; Like `k8s-exec' but bidirectional: opens an `eltainer-terminal'
+;; buffer, streams the pod's stdout / stderr into it, and ships every
+;; keystroke back over channel 0.  Resize is sent on channel 4 as
+;; JSON `{Width, Height}'.  Reuses the WebSocket framing primitives
+;; above; the only new bits are the filter (which feeds bytes to the
+;; terminal instead of accumulating them) and the input-fn override.
+
+(require 'eltainer-terminal)
+
+(cl-defstruct (k8s-exec--itty
+               (:constructor k8s-exec--itty-new)
+               (:copier nil))
+  process            ; network process (TLS-wrapped)
+  buffer             ; eltainer-terminal buffer
+  raw                ; accumulated wire bytes (pre-handshake / partial frames)
+  headers-done       ; t once HTTP/1.1 101 response is consumed
+  exec-id-conn       ; k8s-connection (needed if we add resize-on-window)
+  closed)            ; t once peer disconnects / status frame received
+
+(defun k8s-exec-interactive--encode-stdin (str)
+  "Encode STR as a channel-0 (stdin) WebSocket binary frame."
+  (k8s-exec--encode-frame #x2 (concat (unibyte-string 0) str)))
+
+(defun k8s-exec-interactive--encode-resize (h w)
+  "Encode an (H, W) terminal resize as a channel-4 frame."
+  (let ((payload (concat (unibyte-string 4)
+                         (json-serialize `((Width . ,w) (Height . ,h))
+                                         :null-object nil
+                                         :false-object :false))))
+    (k8s-exec--encode-frame #x2 payload)))
+
+(defun k8s-exec-interactive--filter (itty _proc data)
+  "Wire-bytes filter: strip the HTTP 101, then route WS frames to the terminal."
+  (setf (k8s-exec--itty-raw itty)
+        (concat (k8s-exec--itty-raw itty) data))
+  ;; First, consume the upgrade response (HTTP/1.1 101 …\r\n\r\n).
+  (unless (k8s-exec--itty-headers-done itty)
+    (let* ((raw (k8s-exec--itty-raw itty))
+           (sep (string-search "\r\n\r\n" raw)))
+      (when sep
+        (let ((status (and (string-match "\\`HTTP/[0-9.]+ \\([0-9]+\\)" raw)
+                           (string-to-number (match-string 1 raw)))))
+          (unless (and status (= status 101))
+            (message "k8s exec: handshake failed (HTTP %s)" (or status "?"))))
+        (setf (k8s-exec--itty-raw itty) (substring raw (+ sep 4))
+              (k8s-exec--itty-headers-done itty) t))))
+  ;; Then pump as many frames as we can.
+  (when (k8s-exec--itty-headers-done itty)
+    (let ((pos 0)
+          (raw (k8s-exec--itty-raw itty))
+          stop)
+      (while (not stop)
+        (let ((parsed (k8s-exec--parse-frame raw pos)))
+          (if (null parsed)
+              (setq stop t)
+            (cl-destructuring-bind (_fin opcode payload end) parsed
+              (k8s-exec-interactive--handle itty opcode payload)
+              (setq pos end)))))
+      (setf (k8s-exec--itty-raw itty) (substring raw pos)))))
+
+(defun k8s-exec-interactive--handle (itty opcode payload)
+  "Dispatch a single WS frame for an interactive session."
+  (cond
+   ;; Close frame.
+   ((= opcode #x8)
+    (setf (k8s-exec--itty-closed itty) t))
+   ;; Ping → pong.
+   ((= opcode #x9)
+    (process-send-string (k8s-exec--itty-process itty)
+                         (k8s-exec--encode-frame #xA payload)))
+   ;; Pong: ignore.
+   ((= opcode #xA) nil)
+   ;; Binary (the only data frame k8s sends).
+   ((= opcode #x2)
+    (when (> (length payload) 0)
+      (let ((channel (aref payload 0))
+            (body (substring payload 1)))
+        (cond
+         ;; channels 1 (stdout) and 2 (stderr) both go into the
+         ;; terminal — TTY mode means the pod isn't multiplexing them
+         ;; itself, but the API server still tags the side it's
+         ;; coming from.  We render both as terminal output.
+         ((or (= channel 1) (= channel 2))
+          (eltainer-terminal-feed (k8s-exec--itty-buffer itty) body))
+         ;; channel 3 = exec status (success/failure JSON).
+         ((= channel 3)
+          (when (buffer-live-p (k8s-exec--itty-buffer itty))
+            (with-current-buffer (k8s-exec--itty-buffer itty)
+              (let ((inhibit-read-only t))
+                (goto-char (point-max))
+                (insert (propertize (format "\n[k8s exec: %s]\n" body)
+                                    'font-lock-face 'eltainer-dim))))))))))))
+
+(defun k8s-exec-interactive--sentinel (itty _proc _event)
+  "Mark ITTY closed when the underlying network process exits."
+  (setf (k8s-exec--itty-closed itty) t)
+  (when (buffer-live-p (k8s-exec--itty-buffer itty))
+    (with-current-buffer (k8s-exec--itty-buffer itty)
+      (let ((inhibit-read-only t))
+        (save-excursion
+          (goto-char (point-max))
+          (insert (propertize "\n[stream closed]\n"
+                              'font-lock-face 'eltainer-dim)))))))
+
+(defvar k8s-exec-interactive--processes nil
+  "List of (BUFFER . PROCESS) so the resize hook can find them.")
+
+(defun k8s-exec-interactive--maybe-resize (buf last-dim)
+  "Send a channel-4 resize frame if BUF's window dimensions changed.
+LAST-DIM is the buffer-local previous (H . W) cons or nil."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (let ((dim (eltainer-terminal-window-size buf))
+            (proc (cdr (assq buf k8s-exec-interactive--processes))))
+        (when (and proc (process-live-p proc)
+                   (not (equal dim (symbol-value last-dim))))
+          (set last-dim dim)
+          (eltainer-terminal-resize buf (car dim) (cdr dim))
+          (process-send-string
+           proc (k8s-exec-interactive--encode-resize
+                 (car dim) (cdr dim))))))))
+
+(defun k8s-exec-interactive--window-size-change (frame)
+  "`window-size-change-functions' hook: resize every active TTY exec."
+  (dolist (win (window-list frame))
+    (let ((buf (window-buffer win)))
+      (when (assq buf k8s-exec-interactive--processes)
+        (with-current-buffer buf
+          (k8s-exec-interactive--maybe-resize
+           buf 'k8s-exec-interactive--last-dim))))))
+
+(defvar-local k8s-exec-interactive--last-dim nil
+  "Last (H . W) sent to the remote pod via channel-4 resize.")
+
+(defun k8s-exec-interactive--build-path (ns pod container command)
+  "Build the K8s exec URL with stdin+tty enabled."
+  (let* ((cmd-params
+          (mapconcat (lambda (arg)
+                       (concat "command=" (url-hexify-string arg)))
+                     command "&"))
+         (container-param
+          (if container
+              (concat "&container=" (url-hexify-string container))
+            "")))
+    (format
+     "/api/v1/namespaces/%s/pods/%s/exec?%s%s&stdin=true&stdout=true&stderr=true&tty=true"
+     (url-hexify-string ns)
+     (url-hexify-string pod)
+     cmd-params
+     container-param)))
+
+;;;###autoload
+(defun k8s-exec-interactive (conn ns pod container &optional command)
+  "Open an interactive TTY exec into POD in NS via CONN.
+COMMAND is a list of strings; defaults to `(\"/bin/sh\")'.  CONTAINER
+may be nil for single-container pods.  Opens an `eltainer-terminal'
+buffer; the WebSocket connection drives both display and stdin."
+  (interactive)
+  (let* ((command (or command '("/bin/sh")))
+         (host (k8s-connection-host conn))
+         (port (k8s-connection-port conn))
+         (path (k8s-exec-interactive--build-path ns pod container command))
+         (cert-file (k8s-connection-client-cert-file conn))
+         (key-file (k8s-connection-client-key-file conn))
+         (token (k8s-user-token (k8s-connection-user conn)))
+         (ws-key (k8s-exec--ws-key))
+         (bufname (format "*k8s:exec:%s/%s%s*" ns pod
+                          (if container (format ":%s" container) "")))
+         (term-buf (eltainer-terminal-open bufname))
+         (gnutls-verify-error nil)
+         (gnutls-algorithm-priority k8s-tls-priority)
+         ;; Use a separate hidden buffer for the raw network process —
+         ;; the eltainer-terminal buffer is where rendered output goes.
+         (sock-buf (generate-new-buffer " *k8s-exec-itty*"))
+         (proc (apply #'open-network-stream "k8s-exec-itty" sock-buf host port
+                      :type 'tls
+                      (when (and cert-file key-file)
+                        (list :client-certificate (list key-file cert-file)))))
+         (itty (k8s-exec--itty-new
+                :process proc
+                :buffer term-buf
+                :raw ""
+                :exec-id-conn conn)))
+    (unless proc
+      (kill-buffer sock-buf)
+      (error "k8s-exec-interactive: failed to connect to %s:%d" host port))
+    (set-process-coding-system proc 'binary 'binary)
+    (set-process-query-on-exit-flag proc nil)
+    (set-process-filter   proc (lambda (p d) (k8s-exec-interactive--filter itty p d)))
+    (set-process-sentinel proc (lambda (p e) (k8s-exec-interactive--sentinel itty p e)))
+    ;; Send the WebSocket upgrade request.
+    (process-send-string
+     proc (concat
+           (format "GET %s HTTP/1.1\r\n" path)
+           (format "Host: %s:%d\r\n" host port)
+           "Upgrade: websocket\r\n"
+           "Connection: Upgrade\r\n"
+           (format "Sec-WebSocket-Key: %s\r\n" ws-key)
+           "Sec-WebSocket-Version: 13\r\n"
+           "Sec-WebSocket-Protocol: v4.channel.k8s.io\r\n"
+           (when token
+             (format "Authorization: Bearer %s\r\n" token))
+           "User-Agent: eltainer/0.1\r\n"
+           "\r\n"))
+    ;; Wire keystrokes from the terminal buffer back through channel 0.
+    (eltainer-terminal-set-input-fn
+     term-buf
+     (lambda (str)
+       (when (process-live-p proc)
+         (process-send-string proc (k8s-exec-interactive--encode-stdin str)))))
+    ;; Track this session for the global resize hook.
+    (push (cons term-buf proc) k8s-exec-interactive--processes)
+    (add-hook 'window-size-change-functions
+              #'k8s-exec-interactive--window-size-change)
+    (with-current-buffer term-buf
+      (setq-local k8s-exec-interactive--last-dim nil)
+      ;; Tear down the network process and forget the buffer mapping on close.
+      (add-hook 'kill-buffer-hook
+                (lambda ()
+                  (setq k8s-exec-interactive--processes
+                        (assq-delete-all term-buf
+                                         k8s-exec-interactive--processes))
+                  (when (process-live-p proc) (delete-process proc))
+                  (when (buffer-live-p sock-buf) (kill-buffer sock-buf)))
+                nil t))
+    (pop-to-buffer term-buf)
+    ;; Best-effort initial resize once the buffer is in a window.
+    (k8s-exec-interactive--maybe-resize term-buf 'k8s-exec-interactive--last-dim)
+    term-buf))
+
 (provide 'k8s-exec)
 ;;; k8s-exec.el ends here
