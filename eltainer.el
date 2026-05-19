@@ -29,44 +29,35 @@
 
 (defvar eltainer-views
   '(("Docker" .
-     (("c" "Containers" docker-containers
-       "Running containers (a toggles all).")
-      ("I" "Images"     docker-images
-       "Image inventory; p in `?' pulls a new one.")
-      ("N" "Networks"   docker-networks
-       "Networks + connected containers.")
-      ("p" "Pull"       docker-pull-image
-       "Pull an image by reference, with live progress.")))
+     (("c" "Containers" docker-containers)
+      ("I" "Images"     docker-images)
+      ("N" "Networks"   docker-networks)
+      ("p" "Pull"       docker-pull-image)))
     ("Kubernetes" .
-     (("k" "Pods"          k8s-pods
-       "Pods grouped by namespace; l streams logs, w toggles watch.")
-      ("d" "Deployments"   k8s-deployments
-       "Workload deployments with ready/available replica counts.")
-      ("s" "Services"      k8s-services
-       "Services with cluster-IP, type, and port mappings.")
-      ("S" "StatefulSets"  k8s-statefulsets
-       "Stateful workloads with ordered replicas + volume claims.")
-      ("D" "DaemonSets"    k8s-daemonsets
-       "Per-node DaemonSets and their rollout state.")
-      ("j" "Jobs"          k8s-jobs
-       "One-shot Jobs and their completion status.")
-      ("J" "CronJobs"      k8s-cronjobs
-       "Scheduled CronJobs and their last/next run times.")
-      ("i" "Ingresses"     k8s-ingresses
-       "Ingresses with their hosts, paths, and backends.")
-      ("m" "ConfigMaps"    k8s-configmaps
-       "ConfigMaps; expand to peek at key/value pairs.")
-      ("x" "Secrets"       k8s-secrets
-       "Secrets (metadata only — values stay redacted)."))))
-  "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND [BLURB]) …)).")
+     (("k" "Pods"          k8s-pods)
+      ("d" "Deployments"   k8s-deployments)
+      ("s" "Services"      k8s-services)
+      ("S" "StatefulSets"  k8s-statefulsets)
+      ("D" "DaemonSets"    k8s-daemonsets)
+      ("j" "Jobs"          k8s-jobs)
+      ("J" "CronJobs"      k8s-cronjobs)
+      ("i" "Ingresses"     k8s-ingresses)
+      ("m" "ConfigMaps"    k8s-configmaps)
+      ("x" "Secrets"       k8s-secrets))))
+  "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).")
 
 (defvar-keymap eltainer-mode-map
-  :parent magit-section-mode-map
-  "q" #'quit-window
-  "g" #'eltainer-refresh
-  "?" #'describe-mode
-  "b" #'eltainer-switch-kubeconfig
-  "RET" #'eltainer-dwim-ret)
+  :parent magit-section-mode-map)
+
+;; Re-apply the dashboard keys on every load.  `defvar-keymap' (like
+;; `defvar') only initializes when unbound, so changes to its form
+;; would silently no-op on `eltainer-reload'.
+(dolist (pair '(("q"   . quit-window)
+                ("g"   . eltainer-refresh)
+                ("?"   . describe-mode)
+                ("b"   . eltainer-switch-kubeconfig)
+                ("RET" . eltainer-dwim-ret)))
+  (keymap-set eltainer-mode-map (car pair) (cdr pair)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Kubeconfig switching (magit-branch-style `b')
@@ -200,11 +191,10 @@ context across every discovered kubeconfig file; selecting one sets
         (keymap-set eltainer-mode-map key cmd)))))
 
 (defun eltainer--insert-entry (entry)
-  "Insert one dashboard row for ENTRY."
+  "Insert one dashboard row for ENTRY (KEY LABEL COMMAND)."
   (let* ((key   (nth 0 entry))
          (label (nth 1 entry))
          (cmd   (nth 2 entry))
-         (blurb (nth 3 entry))
          (start (point))
          (avail (fboundp cmd)))
     (magit-insert-section (eltainer-entry cmd t)
@@ -213,12 +203,8 @@ context across every discovered kubeconfig file; selecting one sets
                           'font-lock-face (if avail
                                               'eltainer-resource-name
                                             'eltainer-dim))
-              (propertize (format "%-15s" label)
-                          'font-lock-face (if avail
-                                              'default
-                                            'eltainer-dim))
-              (propertize (or blurb (symbol-name cmd))
-                          'font-lock-face 'eltainer-dim))
+              (propertize label
+                          'font-lock-face (if avail 'default 'eltainer-dim)))
       (insert "\n")
       (add-text-properties start (point) `(eltainer-cmd ,cmd))
       (unless avail
@@ -229,14 +215,14 @@ context across every discovered kubeconfig file; selecting one sets
   "Render the active k8s context + kubeconfig and a `b' switch hint."
   (let* ((path (eltainer--current-kubeconfig))
          (ctx (eltainer--current-context path)))
-    (insert (propertize "Context:     " 'font-lock-face 'eltainer-dim))
+    (insert (propertize "  Context:  " 'font-lock-face 'eltainer-dim))
     (if ctx
         (insert (propertize ctx 'font-lock-face 'eltainer-resource-name))
       (insert (propertize "(unset)" 'font-lock-face 'eltainer-dim)))
     (when path
       (insert (propertize (format "  —  %s" (abbreviate-file-name path))
                           'font-lock-face 'eltainer-resource-secondary)))
-    (insert (propertize "    [b] switch\n\n"
+    (insert (propertize "    [b] switch\n"
                         'font-lock-face 'eltainer-dim))))
 
 (defun eltainer-refresh ()
@@ -247,7 +233,6 @@ context across every discovered kubeconfig file; selecting one sets
     (magit-insert-section (eltainer-root)
       (insert (propertize "eltainer" 'font-lock-face 'eltainer-section-heading)
               " — unified container porcelain\n\n")
-      (eltainer--insert-active-kubeconfig)
       (insert (propertize "Press the key beside an entry, or RET on a row.\n"
                           'font-lock-face 'eltainer-dim))
       (insert (propertize "g refreshes, q quits.\n\n"
@@ -256,6 +241,8 @@ context across every discovered kubeconfig file; selecting one sets
         (magit-insert-section (eltainer-group (car group))
           (magit-insert-heading
             (propertize (car group) 'font-lock-face 'eltainer-section-heading))
+          (when (equal (car group) "Kubernetes")
+            (eltainer--insert-active-kubeconfig))
           (dolist (entry (cdr group))
             (eltainer--insert-entry entry))
           (insert "\n")))
