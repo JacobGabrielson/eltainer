@@ -11,8 +11,12 @@
 (require 'docker-http)
 (require 'docker-stream)
 
-(defcustom docker-events-debounce-seconds 0.25
-  "Minimum seconds between subscriber refreshes for the same buffer."
+(defcustom docker-events-debounce-seconds 1.0
+  "Minimum seconds between subscriber refreshes for the same buffer.
+Events arriving inside this window collapse to a single trailing-edge
+refresh.  1s feels responsive when you just did a `docker stop' but
+soaks up bursts of activity (network reconfig, container churn,
+healthcheck noise that slipped past the action filter)."
   :type 'number
   :group 'docker)
 
