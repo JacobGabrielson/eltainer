@@ -41,7 +41,7 @@ transport, `docker-credential-*` helpers, and Kubernetes
 | Docker | `c` | Containers (running; `a` toggles all) |
 | Docker | `I` | Images |
 | Docker | `N` | Networks (+ connected containers) |
-| Docker | `p` | Pull image (streamed per-layer progress) |
+| Docker | `u` | Pull image (streamed per-layer progress) |
 | Kubernetes | `k` | Pods grouped by namespace |
 | Kubernetes | `d` | Deployments |
 | Kubernetes | `s` | Services |

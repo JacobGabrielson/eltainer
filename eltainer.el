@@ -32,7 +32,7 @@
      (("c" "Containers" docker-containers)
       ("I" "Images"     docker-images)
       ("N" "Networks"   docker-networks)
-      ("p" "Pull"       docker-pull-image)))
+      ("u" "Pull"       docker-pull-image)))
     ("Kubernetes" .
      (("k" "Pods"          k8s-pods)
       ("d" "Deployments"   k8s-deployments)

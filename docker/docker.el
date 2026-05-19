@@ -443,7 +443,7 @@ section."
    ("I" "Images"     docker-images)
    ("N" "Networks"   docker-networks)]
   ["Images"
-   ("p" "Pull image" docker-pull-image)]
+   ("u" "Pull image" docker-pull-image)]
   ["Containers view"
    ("a" "Toggle running/all" docker-containers-toggle-all)]
   ["Container at point"

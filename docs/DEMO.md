@@ -42,7 +42,7 @@ Docker
   c  Containers
   I  Images
   N  Networks
-  p  Pull
+  u  Pull
 
 Kubernetes
   Context:  docker-desktop  —  ~/.kube/config    [b] switch
