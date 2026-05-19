@@ -22,7 +22,14 @@
 ;; `M-x package-install RET eat RET'.
 
 (require 'cl-lib)
-(unless (require 'eat nil t)
+(require 'package)
+(unless (or (require 'eat nil t)
+            ;; eat may be installed in ELPA but not yet activated in this
+            ;; session (Emacs only auto-activates packages at startup).
+            ;; Activate it on the fly so reloading after `package-install'
+            ;; doesn't need a full Emacs restart.
+            (and (package-installed-p 'eat)
+                 (progn (package-activate 'eat) (require 'eat nil t))))
   (error
    "eltainer-terminal: the `eat' package is required for TTY exec.\n\
 Install with `M-x package-install RET eat RET' (MELPA), or see the\n\
