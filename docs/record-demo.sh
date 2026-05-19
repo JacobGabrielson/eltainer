@@ -15,10 +15,33 @@ here="$(cd "$(dirname "$0")" && pwd)"
 cast="$here/exec-demo.cast"
 gif="$here/exec-demo.gif"
 
-# Make sure the sentinel container actually exists.
+# Make sure the docker sentinel container actually exists.
 if ! docker ps --format '{{.Names}}' | grep -qx eltainer-ticker; then
   docker run -d --name eltainer-ticker alpine:3.20 \
     sh -c 'i=0; while true; do echo "tick $i $(date)"; i=$((i+1)); sleep 5; done'
+fi
+
+# Make sure the k8s log-streaming pod exists in the kind cluster.
+# The demo `l'-pressing scene relies on it producing fresh log lines.
+KUBECONFIG=${KUBECONFIG:-$HOME/.kube/configs/config-kind}
+export KUBECONFIG
+if ! kubectl get pod log-ticker >/dev/null 2>&1; then
+  kubectl apply -f - <<'YAML' >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: log-ticker
+spec:
+  restartPolicy: Always
+  containers:
+  - name: ticker
+    image: busybox:1.37
+    command:
+    - /bin/sh
+    - -c
+    - 'i=0; while true; do echo "tick $i $(date)"; i=$((i+1)); sleep 1; done'
+YAML
+  kubectl wait --for=condition=Ready pod/log-ticker --timeout=60s >/dev/null
 fi
 
 rm -f "$cast" "$gif"

@@ -107,11 +107,37 @@ MATCH-FN takes the parsed event alist and returns non-nil to fire."
 ;;; ---------------------------------------------------------------------------
 ;;; Convenience: common matchers
 
+(defconst docker-events--noisy-action-prefixes
+  '("exec_create"        ; healthcheck probe creating an exec
+    "exec_start"          ; healthcheck probe starting an exec
+    "exec_die"            ; healthcheck probe exec exiting
+    "exec_detach"
+    "health_status"       ; periodic healthcheck status broadcast
+    "top")                ; `docker top' polling, similar shape
+  "Container event action prefixes that don't change list-view content.
+Healthy containers fire `exec_*' + `health_status' on every probe (often
+every 5–30s), each of which would trip the matcher and a refresh.  None
+of those actions change what `docker ps' would render, so we filter
+them out before dispatching to subscribers.")
+
+(defun docker-events--noisy-p (event)
+  "Return non-nil if EVENT is a healthcheck/exec firing that doesn't
+change the container list."
+  (let ((action (alist-get 'Action event)))
+    (and action
+         (cl-some (lambda (prefix)
+                    (string-prefix-p prefix action))
+                  docker-events--noisy-action-prefixes))))
+
 (defun docker-events-match-types (&rest types)
   "Return a matcher that fires when the event's Type is in TYPES.
+Filters out `exec_*' / `health_status' / `top' actions on container
+events — those fire continuously on healthy containers and don't
+change the view content.
 Use like (docker-events-subscribe BUF (docker-events-match-types \"container\" \"network\") REFRESH)."
   (lambda (event)
-    (member (alist-get 'Type event) types)))
+    (and (member (alist-get 'Type event) types)
+         (not (docker-events--noisy-p event)))))
 
 (provide 'docker-events)
 ;;; docker-events.el ends here

@@ -71,6 +71,21 @@ line that happens to contain NAME."
     (when target (goto-char target))
     target))
 
+(defun demo--goto-pod (name)
+  "Move point to the magit-section heading of the k8s pod named NAME."
+  (goto-char (point-min))
+  (let (target)
+    (while (and (not target) (not (eobp)))
+      (let ((sec (get-text-property (point) 'magit-section)))
+        (when (and sec (eq (oref sec type) 'pod))
+          (let ((val (ignore-errors (oref sec value))))
+            (when (equal (cdr (assq 'name (cdr (assq 'metadata val))))
+                         name)
+              (setq target (point))))))
+      (forward-line 1))
+    (when target (goto-char target))
+    target))
+
 (defun demo--docker-segment ()
   "Phase 1: dashboard → containers → exec."
   (eltainer)                                ; dashboard
@@ -125,9 +140,26 @@ line that happens to contain NAME."
                 (not (setq buf (get-buffer "*k8s:pods*"))))
       (sit-for 0.1))
     (when buf
-      (with-current-buffer buf
-        (goto-char (point-min))
-        (sit-for 2.8))))
+      (pop-to-buffer buf)
+      (sit-for 1.5)                         ; viewer reads the pod list
+      ;; Navigate to the log-ticker pod and stream its logs.
+      (when (demo--goto-pod "log-ticker")
+        (sit-for 0.6)
+        (demo--press "l" 0.4)               ; tail logs
+        (let ((dl (+ (float-time) 5.0)) lbuf)
+          (while (and (< (float-time) dl)
+                      (not (setq lbuf
+                                 (cl-find-if
+                                  (lambda (b)
+                                    (string-prefix-p
+                                     "*k8s:logs:default/log-ticker"
+                                     (buffer-name b)))
+                                  (buffer-list)))))
+            (sit-for 0.1))
+          (when lbuf
+            (pop-to-buffer lbuf)
+            (sit-for 3.5))                  ; let a few tick lines stream
+          (demo--press "q" 0.6)))))         ; quit the log buffer
   (sit-for 0.5))
 
 (defun demo--run ()
