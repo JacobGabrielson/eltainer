@@ -6,9 +6,8 @@ fronted by a single magit-style UI and **one** transport stack.  No
 exceptions for things the daemon APIs genuinely can't do.
 
 This document started life as the plan for dropping the Docker CLI
-(shipped 2026-05-15, all six phases landed) and was extended after
-the emak8s merge (`docs/merge-emak8s.md`, phases A–G landed
-2026-05-18) to cover the Kubernetes half.  The rest of the doc is
+(shipped 2026-05-15, all six phases landed) and was extended later
+(2026-05-18) to cover the Kubernetes half.  The rest of the doc is
 the same plan-as-it-shipped record; the requirements / constraints /
 "what we deliberately keep" sections apply to both backends now.
 
@@ -36,8 +35,7 @@ the same plan-as-it-shipped record; the requirements / constraints /
 Both halves use `docker-config` as the connection-params struct; the
 Kubernetes side builds one out of its kubeconfig and threads it
 through `docker-http-request` / `docker-http-stream` exactly like the
-Docker side does.  See `docs/merge-emak8s.md` for the phase-by-phase
-history of how that came together.
+Docker side does.
 
 The remainder of this document is the original Docker-CLI-removal
 plan; it's the most detailed living record of what the transport
@@ -55,7 +53,7 @@ rather than pulling in elisp libraries that reimplement them.
 
   ```elisp
   (unless (fboundp 'json-parse-string)
-    (error "eldocker requires native JSON support (Emacs built with
+    (error "eltainer requires native JSON support (Emacs built with
             --with-json or Emacs 27+ with libjansson)"))
   ```
 
@@ -71,7 +69,7 @@ rather than pulling in elisp libraries that reimplement them.
 
   ```elisp
   (unless (gnutls-available-p)
-    (error "eldocker requires GnuTLS support to talk to %s — rebuild
+    (error "eltainer requires GnuTLS support to talk to %s — rebuild
             Emacs --with-gnutls" host))
   ```
 

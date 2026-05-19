@@ -14,9 +14,9 @@ file before re-recording.
 
 Before the gif starts:
 
-- A sentinel container named `eldocker-ticker` is running (alpine,
+- A sentinel container named `eltainer-ticker` is running (alpine,
   echoing `tick $i $(date)` on a 5-second loop).  Other sentinels
-  (`eldocker-nginx`, `-redis`, `-postgres`, `-httpbin`) may also be
+  (`eltainer-nginx`, `-redis`, `-postgres`, `-httpbin`) may also be
   running and will appear in the containers list.
 - A `kind` cluster named `eltainer-demo` is up — registered in
   `~/.kube/config` as the `kind-eltainer-demo` context, alongside the
@@ -64,21 +64,21 @@ Endpoint:  unix:///var/run/docker.sock
 
   NAME                  STATE      IMAGE         PORTS                  AGE
   eltainer-demo-control-plane  running  kindest/node:v1.35.0@s…  127.0.0.1:55002→6443/tcp  …
-  eldocker-ticker              running  alpine:3.20              …                          3d
-  eldocker-httpbin             running  kennethreitz/httpbin     0.0.0.0:8081→80/tcp       …
-  eldocker-postgres            running  postgres:16-alpine       0.0.0.0:5433→5432/tcp     …
-  eldocker-redis               running  redis:7-alpine           0.0.0.0:6380→6379/tcp     …
-  eldocker-nginx               running  nginx:alpine             0.0.0.0:8080→80/tcp       5d
+  eltainer-ticker              running  alpine:3.20              …                          3d
+  eltainer-httpbin             running  kennethreitz/httpbin     0.0.0.0:8081→80/tcp       …
+  eltainer-postgres            running  postgres:16-alpine       0.0.0.0:5433→5432/tcp     …
+  eltainer-redis               running  redis:7-alpine           0.0.0.0:6380→6379/tcp     …
+  eltainer-nginx               running  nginx:alpine             0.0.0.0:8080→80/tcp       5d
 ```
 
-Point lands on `eldocker-ticker` (a real `re-search-forward` in the
+Point lands on `eltainer-ticker` (a real `re-search-forward` in the
 script).
 
 ## Scene 3 — Exec into the container (≈0.8 s setup)
 
-`e` is pressed.  The minibuffer prompts `Exec in eldocker-ticker:
+`e` is pressed.  The minibuffer prompts `Exec in eltainer-ticker:
 /bin/sh` — `RET` accepts the default.  `docker-exec-at-point` opens
-`*docker:exec:eldocker-ticker*` in the resolved terminal backend
+`*docker:exec:eltainer-ticker*` in the resolved terminal backend
 (`eat` if installed, falls back to `vterm` → `term`).
 
 The viewer sees the buffer split: the exec buffer on top, the docker

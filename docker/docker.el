@@ -1,6 +1,6 @@
 ;;; docker.el --- Docker porcelain for Emacs -*- lexical-binding: t -*-
 ;;
-;; Main entry point for eldocker.  Provides shared infrastructure
+;; Main entry point for the eltainer docker side.  Provides shared infrastructure
 ;; (connection, faces, helpers) and magit-section-based views for
 ;; containers and images.
 ;;
@@ -408,9 +408,9 @@ section."
          (cfg (docker--ensure-config))
          (net (docker--read-network cfg (format "Connect %s to network: " cname))))
     (if (docker-network-connect cfg net cname)
-        (progn (message "eldocker: connected %s to %s" cname net)
+        (progn (message "eltainer: connected %s to %s" cname net)
                (revert-buffer))
-      (message "eldocker: connect failed (%s → %s)" cname net))))
+      (message "eltainer: connect failed (%s → %s)" cname net))))
 
 (defun docker-network-disconnect-at-point ()
   "Disconnect the container at point from one of its networks."
@@ -424,9 +424,9 @@ section."
                                     (format "Disconnect %s from network: " cname)
                                     current)))
     (if (docker-network-disconnect cfg net cname)
-        (progn (message "eldocker: disconnected %s from %s" cname net)
+        (progn (message "eltainer: disconnected %s from %s" cname net)
                (revert-buffer))
-      (message "eldocker: disconnect failed (%s → %s)" cname net))))
+      (message "eltainer: disconnect failed (%s → %s)" cname net))))
 
 ;; Bind in the containers view (j = join, J = jettison).
 (keymap-set docker-containers-mode-map "j" #'docker-network-connect-at-point)
@@ -437,7 +437,7 @@ section."
 ;;; Transient dispatch
 
 (transient-define-prefix docker-dispatch ()
-  "Main eldocker command menu."
+  "Main eltainer docker command menu."
   ["Views"
    ("c" "Containers" docker-containers)
    ("I" "Images"     docker-images)
@@ -463,7 +463,7 @@ section."
 
 ;;;###autoload
 (defun docker ()
-  "Main entry point for eldocker.  Shows running containers by default."
+  "Main entry point for the eltainer docker views.  Shows running containers by default."
   (interactive)
   (docker-containers))
 
@@ -537,30 +537,30 @@ disconnects the member from its network."
         (let ((name (docker-container-name value)))
           (when (yes-or-no-p (format "Remove container %s? " name))
             (docker-remove-container cfg name)
-            (message "eldocker: removed container %s" name)
+            (message "eltainer: removed container %s" name)
             (revert-buffer))))
        ((docker-image-p value)
         (let ((name (docker-image-repository value)))
           (when (yes-or-no-p (format "Remove image %s? " name))
             (docker-remove-image cfg name)
-            (message "eldocker: removed image %s" name)
+            (message "eltainer: removed image %s" name)
             (revert-buffer))))
        ((docker-network-p value)
         (let ((name (docker-network-name value)))
           (when (yes-or-no-p (format "Remove network %s? " name))
             (if (docker-remove-network cfg name)
-                (progn (message "eldocker: removed network %s" name)
+                (progn (message "eltainer: removed network %s" name)
                        (revert-buffer))
-              (message "eldocker: removing %s failed (containers still attached?)"
+              (message "eltainer: removing %s failed (containers still attached?)"
                        name)))))
        ((docker-network-member-p value)
         (let ((net (docker-network-member-network-name value))
               (cname (docker-network-member-container-name value)))
           (when (yes-or-no-p (format "Disconnect %s from %s? " cname net))
             (if (docker-network-disconnect cfg net cname)
-                (progn (message "eldocker: disconnected %s from %s" cname net)
+                (progn (message "eltainer: disconnected %s from %s" cname net)
                        (revert-buffer))
-              (message "eldocker: disconnect failed")))))
+              (message "eltainer: disconnect failed")))))
        (t (user-error "Unknown resource type"))))))
 
 ;;; ---------------------------------------------------------------------------
@@ -590,12 +590,12 @@ VERB is the lowercase action word; the generated function is named
               (cfg (docker--ensure-config)))
          (if (,api-fn cfg name)
              (progn (message ,ok-message name) (revert-buffer))
-           (message "eldocker: %s failed for %s" ,verb name))))))
+           (message "eltainer: %s failed for %s" ,verb name))))))
 
-(docker--define-container-action "stop"    docker-stop-container    "eldocker: stopped %s")
-(docker--define-container-action "start"   docker-start-container   "eldocker: started %s")
-(docker--define-container-action "restart" docker-restart-container "eldocker: restarted %s")
-(docker--define-container-action "kill"    docker-kill-container    "eldocker: killed %s")
+(docker--define-container-action "stop"    docker-stop-container    "eltainer: stopped %s")
+(docker--define-container-action "start"   docker-start-container   "eltainer: started %s")
+(docker--define-container-action "restart" docker-restart-container "eltainer: restarted %s")
+(docker--define-container-action "kill"    docker-kill-container    "eltainer: killed %s")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Logs

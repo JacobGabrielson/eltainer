@@ -3,7 +3,7 @@
 ;; The bits both `docker.el' and `k8s.el' duplicate: status-classified
 ;; faces, an ISO-timestamp-to-age formatter, a length-bounded truncator,
 ;; and the recursive alist/vector pretty-printer the inspect buffers
-;; use.  Phase C of the merge plan; see `docs/merge-emak8s.md'.
+;; use.
 ;;
 ;; The domain modules (`docker.el', `k8s.el') inherit from the generic
 ;; faces, so individual look-and-feel customizations only need to be

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Record the eldocker `e' demo into docs/exec-demo.gif.
+# Record the eltainer `e' demo into docs/exec-demo.gif.
 #
 # Pipeline:
 #   1. asciinema rec --command "emacs -nw -Q -l demo-init.el" → .cast
@@ -16,15 +16,15 @@ cast="$here/exec-demo.cast"
 gif="$here/exec-demo.gif"
 
 # Make sure the sentinel container actually exists.
-if ! docker ps --format '{{.Names}}' | grep -qx eldocker-ticker; then
-  docker run -d --name eldocker-ticker alpine:3.20 \
+if ! docker ps --format '{{.Names}}' | grep -qx eltainer-ticker; then
+  docker run -d --name eltainer-ticker alpine:3.20 \
     sh -c 'i=0; while true; do echo "tick $i $(date)"; i=$((i+1)); sleep 5; done'
 fi
 
 rm -f "$cast" "$gif"
 
 # Emacs needs DOCKER_CLI_HINTS off so its child-process callers don't
-# spew "What's next" footers; eldocker itself doesn't invoke the CLI
+# spew "What's next" footers; eltainer itself doesn't invoke the CLI
 # in this demo, but better to be sure.
 export DOCKER_CLI_HINTS=false
 

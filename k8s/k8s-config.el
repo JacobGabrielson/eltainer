@@ -1,4 +1,4 @@
-;;; k8s-config.el --- Kubeconfig parser for emak8s -*- lexical-binding: t -*-
+;;; k8s-config.el --- Kubeconfig parser for eltainer -*- lexical-binding: t -*-
 ;;
 ;; Parse Kubernetes configuration files (kubeconfig) into structured
 ;; Elisp data.  Handles the YAML subset used by kubeconfig: block

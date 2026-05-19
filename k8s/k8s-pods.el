@@ -1,4 +1,4 @@
-;;; k8s-pods.el --- Interactive pod listing for emak8s -*- lexical-binding: t -*-
+;;; k8s-pods.el --- Interactive pod listing for eltainer -*- lexical-binding: t -*-
 ;;
 ;; Provides an interactive buffer showing all pods in the current
 ;; Kubernetes cluster, inspired by magit's section-based UI.

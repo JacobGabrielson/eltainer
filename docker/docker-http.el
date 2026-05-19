@@ -24,7 +24,7 @@
 
 ;; Load-time capability check: native JSON.
 (unless (fboundp 'json-parse-string)
-  (error "eldocker requires native JSON support (Emacs built --with-json)"))
+  (error "eltainer requires native JSON support (Emacs built --with-json)"))
 
 (defgroup docker-http nil
   "HTTP transport for the Docker engine API."
@@ -61,7 +61,7 @@
   "Refuse if GnuTLS is unavailable but HOST is a TLS endpoint."
   (unless (gnutls-available-p)
     (error
-     "eldocker: TLS required for %s but Emacs lacks GnuTLS — rebuild --with-gnutls"
+     "eltainer: TLS required for %s but Emacs lacks GnuTLS — rebuild --with-gnutls"
      host)))
 
 (defun docker-http--connect (cfg)
@@ -160,7 +160,7 @@ HEADERS take precedence over the per-name defaults; pass e.g.
          (full-path (if (and qs (> (length qs) 0)) (concat path "?" qs) path))
          (default-headers
           (append `(("Host" . "localhost")
-                    ("User-Agent" . "eldocker/0.1")
+                    ("User-Agent" . "eltainer/0.1")
                     ("Accept" . "application/json")
                     ("Connection" . "close"))
                   (when body

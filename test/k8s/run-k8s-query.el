@@ -21,22 +21,22 @@
                                       (file-name-directory
                                        (or load-file-name buffer-file-name))))
        (conn (k8s-connection-open kubeconfig)))
-  (message "emak8s: connected to %s:%d (user: %s)"
+  (message "eltainer: connected to %s:%d (user: %s)"
            (k8s-connection-host conn)
            (k8s-connection-port conn)
            (k8s-user-name (k8s-connection-user conn)))
 
   ;; List namespaces
-  (message "emak8s: querying namespaces...")
+  (message "eltainer: querying namespaces...")
   (let ((namespaces (k8s-list-namespaces conn)))
-    (message "emak8s: found %d namespaces:" (length namespaces))
+    (message "eltainer: found %d namespaces:" (length namespaces))
     (seq-doseq (ns namespaces)
       (message "  - %s" (cdr (assq 'name (cdr (assq 'metadata ns)))))))
 
   ;; List pods in bookstore namespace
-  (message "\nemak8s: querying pods in bookstore...")
+  (message "\neltainer: querying pods in bookstore...")
   (let ((pods (k8s-list-pods conn "bookstore")))
-    (message "emak8s: found %d pods:" (length pods))
+    (message "eltainer: found %d pods:" (length pods))
     (seq-doseq (pod pods)
       (let* ((meta (cdr (assq 'metadata pod)))
              (status (cdr (assq 'status pod)))
@@ -46,9 +46,9 @@
                  phase))))
 
   ;; List services
-  (message "\nemak8s: querying services in bookstore...")
+  (message "\neltainer: querying services in bookstore...")
   (let ((svcs (k8s-list-services conn "bookstore")))
-    (message "emak8s: found %d services:" (length svcs))
+    (message "eltainer: found %d services:" (length svcs))
     (seq-doseq (svc svcs)
       (let* ((meta (cdr (assq 'metadata svc)))
              (spec (cdr (assq 'spec svc)))

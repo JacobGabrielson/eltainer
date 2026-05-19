@@ -1,6 +1,6 @@
 ;;; k8s.el --- Kubernetes UI for Emacs -*- lexical-binding: t -*-
 ;;
-;; Main entry point for emak8s.  Provides shared infrastructure
+;; Main entry point for the eltainer k8s side.  Provides shared infrastructure
 ;; (connection, namespace filtering, faces, helpers) and views for
 ;; all common Kubernetes resource types.
 ;;
@@ -337,11 +337,11 @@ k8s-themed heading face."
       (unless (cdr (assq type k8s--resource-api-paths))
         (user-error "Don't know how to delete %s" type))
       (when (yes-or-no-p (format "Delete %s %s/%s? " type ns name))
-        (message "emak8s: deleting %s %s/%s ..." type ns name)
+        (message "eltainer: deleting %s %s/%s ..." type ns name)
         (let ((result (k8s-delete-resource conn type ns name)))
           (if (and result (equal (cdr (assq 'status result)) "Success"))
-              (message "emak8s: deleted %s %s/%s" type ns name)
-            (message "emak8s: delete %s %s/%s — %s"
+              (message "eltainer: deleted %s %s/%s" type ns name)
+            (message "eltainer: delete %s %s/%s — %s"
                      type ns name
                      (or (cdr (assq 'message result))
                          (cdr (assq 'status result))
@@ -467,7 +467,7 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
         ("DELETED"  (remhash uid k8s--resource-table))
         ("BOOKMARK" nil)  ; just a keepalive
         ("ERROR"
-         (message "emak8s watch: error event: %s"
+         (message "eltainer watch: error event: %s"
                   (cdr (assq 'message object))))))
     ;; Debounced re-render
     (when k8s--watch-debounce-timer
@@ -501,7 +501,7 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
   (interactive)
   (cond
    (k8s--watch-starting
-    (message "emak8s: watch start already in progress..."))
+    (message "eltainer: watch start already in progress..."))
    (k8s--watch
     (k8s--watch-stop-for-buffer))
    (t
@@ -512,7 +512,7 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
   (unless k8s--api-path-fn
     (user-error "This view does not support watching"))
   (setq k8s--watch-starting t)
-  (message "emak8s: starting watch...")
+  (message "eltainer: starting watch...")
   (redisplay)
   (unwind-protect
       (let* ((conn (k8s--ensure-connection))
@@ -536,7 +536,7 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
                                      (with-current-buffer buf
                                        (k8s--watch-event-handler type object)))))))
         (force-mode-line-update)
-        (message "emak8s: watching %s" path))
+        (message "eltainer: watching %s" path))
     (setq k8s--watch-starting nil)))
 
 (defun k8s--watch-stop-for-buffer ()
@@ -546,7 +546,7 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
     (setq k8s--watch nil)
     (setq k8s--resource-table nil)
     (force-mode-line-update)
-    (message "emak8s: watch stopped")))
+    (message "eltainer: watch stopped")))
 
 (defun k8s--watch-mode-line ()
   "Return mode-line string indicating watch status."
@@ -653,7 +653,7 @@ LINE-FN inserts one item."
 (autoload 'k8s-pods "k8s-pods" nil t)
 
 (transient-define-prefix k8s-dispatch ()
-  "Main emak8s command menu."
+  "Main eltainer k8s command menu."
   [["Workloads"
     ("p" "Pods"         k8s-pods)
     ("d" "Deployments"  k8s-deployments)
@@ -677,7 +677,7 @@ LINE-FN inserts one item."
 
 ;;;###autoload
 (defun k8s ()
-  "Main entry point for emak8s.  Shows pods by default."
+  "Main entry point for the eltainer k8s views.  Shows pods by default."
   (interactive)
   (k8s-pods))
 

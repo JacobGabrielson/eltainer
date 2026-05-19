@@ -142,13 +142,13 @@
         ;; User
         (let ((user (k8s-config-resolve-user cfg)))
           (should user)
-          (should (equal (k8s-user-name user) "emak8s-admin"))
+          (should (equal (k8s-user-name user) "test-admin"))
           (should (k8s-user-token user)))
         ;; Context
         (let ((ctx (k8s-config-resolve-context cfg)))
           (should ctx)
           (should (equal (k8s-context-cluster ctx) "microk8s-cluster"))
-          (should (equal (k8s-context-user ctx) "emak8s-admin")))))))
+          (should (equal (k8s-context-user ctx) "test-admin")))))))
 
 (provide 'test-k8s-config)
 ;;; test-k8s-config.el ends here

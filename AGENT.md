@@ -1,10 +1,22 @@
-# AGENT.md — Project rules for eldocker
+# AGENT.md — Project rules for eltainer
 
 ## What this project is
 
-A pure Emacs Lisp Docker client and magit-style Docker browser.
-Shells out to the Docker CLI (docker, sbx, etc.) — no other external
-dependencies. All parsing, UI rendering, and business logic is pure Elisp.
+A pure Emacs Lisp client and magit-style browser for Docker and
+Kubernetes.  No external dependencies — all parsing, UI rendering, and
+business logic is pure Elisp.
+
+## UI conventions — magit by default
+
+**The UI must behave like magit.**  Section-based buffers, transient
+dispatch menus, single-letter actions, `n`/`p`/`TAB` navigation, `g` to
+refresh, `q` to quit, `b` for switch-like actions, and so on.  When in
+doubt, do what magit does.
+
+Deviations are allowed only when the underlying domain (Docker /
+Kubernetes) has no magit-equivalent concept — and any such deviation
+must be a deliberate choice, called out in the diff and (if it'll
+surprise a contributor) noted here.
 
 ## Implementation plan (2026-05-13)
 
@@ -33,7 +45,7 @@ dependencies. All parsing, UI rendering, and business logic is pure Elisp.
 5. **docker.el** — Shared magit-section UI infrastructure
    - Magit-section based buffer for container/image views
    - Transient menus for actions
-   - Keybinding conventions matching emak8s style
+   - Keybinding conventions matching magit-style flows
 
 ### Phase 2 — Advanced features
 
@@ -61,8 +73,8 @@ dependencies. All parsing, UI rendering, and business logic is pure Elisp.
 ### Phase 4 — Direct-daemon spike (exploratory)
 
 11. **docker-daemon.el** — Trial: bypass the docker CLI entirely and
-    speak HTTP directly to the daemon over the Unix socket (the
-    emak8s-style approach). Intentionally tiny — implement only
+    speak HTTP directly to the daemon over the Unix socket.
+    Intentionally tiny — implement only
     `GET /containers/json` so we can compare ergonomics with the
     CLI-backed code paths. Not wired into the magit view; just an
     interactive `docker-daemon-ps` that prints container names.
@@ -163,7 +175,7 @@ emacs --script test/test-docker-images.el
 ## Demo recording
 
 Record demos using `asciinema` (install with `brew install asciinema`).
-Use `asciinema rec` to record terminal sessions showing eldocker in
+Use `asciinema rec` to record terminal sessions showing eltainer in
 action. Store recordings in a `demos/` directory (not committed to git).
 
 ## User preferences

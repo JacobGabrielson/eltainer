@@ -77,8 +77,8 @@ in its `docker-cfg' slot — all subsequent requests go through
             (when token
               `(("Authorization" . ,(format "Bearer %s" token))))
             '(("Accept" . "application/json")
-              ("User-Agent" . "emak8s/0.1"))))))
-    (message "emak8s: connecting to %s:%d ..." host port)
+              ("User-Agent" . "eltainer/0.1"))))))
+    (message "eltainer: connecting to %s:%d ..." host port)
     (k8s-connection--new
      :config config
      :cluster cluster

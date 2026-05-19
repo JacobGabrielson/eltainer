@@ -5,7 +5,7 @@
 ;;
 ;;   1. `M-x eltainer'    — dashboard listing both backends + active context
 ;;   2. `c'               — docker containers view
-;;   3. move to eldocker-ticker, `e' → RET → /bin/sh in the container
+;;   3. move to eltainer-ticker, `e' → RET → /bin/sh in the container
 ;;   4. run a few shell commands; exit the shell
 ;;   5. back to the dashboard, press `b' to switch k8s context
 ;;   6. pick the kind cluster from the context picker
@@ -60,7 +60,7 @@
   (demo--press "c" 1.5)                     ; → docker containers
   (with-current-buffer "*docker:containers*"
     (goto-char (point-min))
-    (when (re-search-forward "eldocker-ticker" nil t)
+    (when (re-search-forward "eltainer-ticker" nil t)
       (beginning-of-line)
       (forward-char 2))
     (sit-for 0.8)
@@ -70,7 +70,7 @@
         (buf nil))
     (while (and (< (float-time) deadline)
                 (not (setq buf (get-buffer
-                                "*docker:exec:eldocker-ticker*"))))
+                                "*docker:exec:eltainer-ticker*"))))
       (sit-for 0.1))
     (when buf
       (pop-to-buffer buf)

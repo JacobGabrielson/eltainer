@@ -94,8 +94,5 @@ major mode in any live `docker-*-mode' / `k8s-*-mode' buffer."
                            (length errors) (mapconcat #'identity errors ", "))
                  "")))))
 
-;; Backwards-compatible alias from the old name.
-(defalias 'eldocker-reload #'eltainer-reload)
-
 (provide 'reload)
 ;;; reload.el ends here

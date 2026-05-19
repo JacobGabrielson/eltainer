@@ -273,7 +273,7 @@ Signals an error if the connection or WebSocket handshake fails."
                 "Sec-WebSocket-Protocol: v4.channel.k8s.io\r\n"
                 (when token
                   (format "Authorization: Bearer %s\r\n" token))
-                "User-Agent: emak8s/0.1\r\n"
+                "User-Agent: eltainer/0.1\r\n"
                 "\r\n")))
       (process-send-string proc req))
     ;; Spin until the session ends or we hit the timeout.
