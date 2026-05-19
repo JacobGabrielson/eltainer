@@ -1,8 +1,9 @@
 # Plan: merge emak8s into this repo
 
-Status: **proposal**.  Sketches a unified "Emacs container porcelain"
-that fronts both Docker daemons and Kubernetes clusters through the
-same UI primitives.
+Status: **done** as of 2026-05-18.  Phases A–G all landed; upstream
+emak8s is being archived on GitHub.  Kept on disk as the design
+record for the lift — read it to understand the *shape* of the
+merge, not as forward-looking planning.
 
 ## Why merge
 

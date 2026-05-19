@@ -1,9 +1,47 @@
-# Plan: drop the docker CLI, talk to the daemon directly
+# Architecture
 
-Status: **done** as of 2026-05-15.  All six phases shipped; the
-production code paths talk to the daemon HTTP engine API via
-`docker-http.el`.  CLI shell-outs remain only for the explicit
-fallbacks listed under "Where we deliberately keep `call-process`."
+eltainer is two backends — Docker daemon and Kubernetes API server —
+fronted by a single magit-style UI and **one** transport stack.  No
+`docker` CLI and no `kubectl`; the rare CLI fallbacks are documented
+exceptions for things the daemon APIs genuinely can't do.
+
+This document started life as the plan for dropping the Docker CLI
+(shipped 2026-05-15, all six phases landed) and was extended after
+the emak8s merge (`docs/merge-emak8s.md`, phases A–G landed
+2026-05-18) to cover the Kubernetes half.  The rest of the doc is
+the same plan-as-it-shipped record; the requirements / constraints /
+"what we deliberately keep" sections apply to both backends now.
+
+## Stack at a glance
+
+```
+  eltainer-ui          shared faces, age-string, describe-value
+  eltainer-terminal    eat / vterm / term backend selector
+  eltainer-shell-helper invoke external helper binaries (cred / exec
+                       plugins)
+  docker-http          HTTP/1.1 over unix / TCP / TCP+TLS (GnuTLS);
+                       sync + streaming.  k8s + docker both use this.
+  docker-stream        chunked decoder, ndjson splitter, mux demux
+
+      ↑
+      │ shared
+  ────┴────                     ────┴────
+  docker/  domain modules       k8s/    domain modules
+   - docker-config, -api, -ps    - k8s-config, -api, -watch,
+   - -images, -networks,           -pods, -fs, -fs-ui, -exec
+   - -events, -logs, -exec,        - k8s.el (views + transient)
+   - -auth, -pull, docker.el
+```
+
+Both halves use `docker-config` as the connection-params struct; the
+Kubernetes side builds one out of its kubeconfig and threads it
+through `docker-http-request` / `docker-http-stream` exactly like the
+Docker side does.  See `docs/merge-emak8s.md` for the phase-by-phase
+history of how that came together.
+
+The remainder of this document is the original Docker-CLI-removal
+plan; it's the most detailed living record of what the transport
+does and doesn't do.
 
 ## Requirements (Emacs 30+)
 

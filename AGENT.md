@@ -97,18 +97,21 @@ test/              — ERT tests against local Docker daemon
 ## Core constraints
 
 - **Pure Elisp only.** Every line of code must be Emacs Lisp.
-- **Talk to the Docker daemon directly over its HTTP engine API.**
-  No shelling out to the `docker` CLI from production code paths.
-  Transport is `docker-http.el` (Unix socket / TCP / TCP+TLS via
-  built-in GnuTLS).  See `docs/direct-daemon-rewrite.md`.
+- **Talk to the daemon directly over its HTTP API.**  Both the Docker
+  daemon and the Kubernetes API server are reached via `docker-http`
+  (Unix socket / TCP / TCP+TLS via built-in GnuTLS).  No `docker` CLI
+  and no `kubectl` in production code paths.  See
+  `docs/architecture.md`.
 - **Native JSON only.** Use `json-parse-string`/`json-parse-buffer`
   and `json-serialize`; refuse to load on Emacs without them.
-- **The exceptions** (each in a narrowly-scoped, named helper):
-  build & buildx (BuildKit gRPC), `docker compose`, CLI plugins,
-  `docker login` config writes, `DOCKER_HOST=ssh://…` transport,
-  and `docker-credential-*` helper invocations.  Test scaffolding
-  may shell out for sentinel containers — production code never
-  does.
+- **The narrowly-scoped exceptions** (each in a clearly-named helper):
+  - Docker: build / buildx (BuildKit gRPC), `docker compose`, CLI
+    plugins, `docker login` config writes, `DOCKER_HOST=ssh://…`
+    transport, `docker-credential-*` helper invocations.
+  - K8s: `users.exec` plugins (`aws eks get-token`,
+    `gke-gcloud-auth-plugin`, …) for kubeconfig credentials.
+  Test scaffolding may shell out for sentinel containers — production
+  code never does.
 - **Target Emacs 30+.**
 
 ## Code style

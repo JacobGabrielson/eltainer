@@ -8,7 +8,9 @@
 
 (require 'cl-lib)
 (require 'magit-section)
+(require 'docker-http)
 (require 'k8s)
+(require 'k8s-api)
 (require 'k8s-fs-ui)
 
 ;;; ---------------------------------------------------------------------------
@@ -154,77 +156,82 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
 (defvar-local k8s--log-ns nil "Namespace for log buffer.")
 (defvar-local k8s--log-pod nil "Pod name for log buffer.")
 (defvar-local k8s--log-container nil "Container name for log buffer.")
-(defvar-local k8s--log-tail-timer nil "Timer for auto-refresh.")
-(defvar-local k8s--log-following t "Non-nil if following tail.")
+(defvar-local k8s--log-process nil "Streaming HTTP process for this buffer.")
 
-(defun k8s--log-refresh (&optional full)
-  "Refresh the log buffer.  If FULL, fetch all lines."
-  (let* ((inhibit-read-only t)
-         (at-end (>= (point) (point-max)))
-         (logs (k8s-pod-logs k8s--log-conn k8s--log-ns
-                             k8s--log-pod
-                             (unless full 500)
-                             k8s--log-container)))
-    (erase-buffer)
-    (insert logs)
-    (when (or at-end k8s--log-following)
-      (goto-char (point-max)))))
+(defun k8s--log-cleanup ()
+  "Tear down the streaming process attached to the current buffer."
+  (when (process-live-p k8s--log-process)
+    (delete-process k8s--log-process))
+  (setq k8s--log-process nil))
 
-(defun k8s--log-toggle-follow ()
-  "Toggle auto-follow mode."
+(defun k8s--log-append (buf bytes)
+  "Append BYTES to BUF, autoscrolling if point was at the end."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (let ((inhibit-read-only t)
+            (at-end (= (point) (point-max))))
+        (save-excursion
+          (goto-char (point-max))
+          (insert bytes))
+        (when at-end (goto-char (point-max)))))))
+
+(defun k8s--log-start (&optional tail-lines)
+  "Open a streaming connection for the current log buffer.
+TAIL-LINES bounds the initial history (default 500)."
+  (k8s--log-cleanup)
+  (let* ((cfg (k8s-connection-docker-cfg k8s--log-conn))
+         (path (format "/api/v1/namespaces/%s/pods/%s/log"
+                       k8s--log-ns k8s--log-pod))
+         (query `(("follow" . "true")
+                  ("tailLines" . ,(number-to-string (or tail-lines 500)))
+                  ,@(when k8s--log-container
+                      `(("container" . ,k8s--log-container)))))
+         (buf (current-buffer)))
+    (let ((inhibit-read-only t)) (erase-buffer))
+    (setq k8s--log-process
+          (docker-http-stream
+           cfg "GET" path
+           :query query
+           ;; No Accept override — the k8s API server returns 406 when
+           ;; asked for text/plain even though the /log endpoint
+           ;; happens to emit plain text for success.  Use the default
+           ;; `application/json' from `default-headers'; for /log the
+           ;; server still sends raw stdout text.
+           :on-chunk (lambda (bytes) (k8s--log-append buf bytes))
+           :on-close (lambda ()
+                       (when (buffer-live-p buf)
+                         (with-current-buffer buf
+                           (let ((inhibit-read-only t))
+                             (save-excursion
+                               (goto-char (point-max))
+                               (insert "\n[stream closed]\n"))))))))))
+
+(defun k8s--log-restart ()
+  "Restart the streaming connection for this buffer."
   (interactive)
-  (setq k8s--log-following (not k8s--log-following))
-  (if k8s--log-following
-      (progn
-        (unless k8s--log-tail-timer
-          (setq k8s--log-tail-timer
-                (run-with-timer 2 2 #'k8s--log-tick (current-buffer))))
-        (goto-char (point-max))
-        (message "Following"))
-    (when k8s--log-tail-timer
-      (cancel-timer k8s--log-tail-timer)
-      (setq k8s--log-tail-timer nil))
-    (message "Stopped following")))
-
-(defun k8s--log-tick (buf)
-  "Timer callback: refresh log BUF if it's still alive and visible."
-  (if (buffer-live-p buf)
-      (when (get-buffer-window buf)
-        (with-current-buffer buf
-          (when k8s--log-following
-            (condition-case nil
-                (progn (k8s--log-refresh)
-                       (force-window-update (get-buffer-window buf)))
-              (error nil)))))
-    ;; Buffer gone, cancel timer
-    (cancel-timer k8s--log-tail-timer)))
+  (unless (and k8s--log-conn k8s--log-ns k8s--log-pod)
+    (user-error "Not a k8s log buffer"))
+  (k8s--log-start))
 
 (defun k8s--log-quit ()
-  "Quit log buffer and clean up timer."
+  "Stop the log stream and quit the window."
   (interactive)
-  (when k8s--log-tail-timer
-    (cancel-timer k8s--log-tail-timer)
-    (setq k8s--log-tail-timer nil))
+  (k8s--log-cleanup)
   (quit-window t))
 
 (defvar-keymap k8s-log-mode-map
   :parent special-mode-map
-  "f" #'k8s--log-toggle-follow
-  "g" (lambda () (interactive) (k8s--log-refresh))
-  "G" (lambda () (interactive) (k8s--log-refresh t))
+  "g" #'k8s--log-restart
+  "G" #'end-of-buffer
   "q" #'k8s--log-quit)
 
 (define-derived-mode k8s-log-mode special-mode "K8s:Log"
-  "Major mode for viewing Kubernetes pod logs.
+  "Major mode for streaming Kubernetes pod logs.
 
 \\{k8s-log-mode-map}"
   :group 'k8s
-  ;; Cancel timer when buffer is killed
-  (add-hook 'kill-buffer-hook
-            (lambda ()
-              (when k8s--log-tail-timer
-                (cancel-timer k8s--log-tail-timer)))
-            nil t))
+  (setq-local truncate-lines nil)
+  (add-hook 'kill-buffer-hook #'k8s--log-cleanup nil t))
 
 (defun k8s-pod-view-logs ()
   "Show tailing logs for the pod at point."
@@ -249,15 +256,10 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
         (setq k8s--log-conn conn
               k8s--log-ns ns
               k8s--log-pod name
-              k8s--log-container container
-              k8s--log-following t)
-        (k8s--log-refresh)
-        ;; Start auto-refresh timer
-        (setq k8s--log-tail-timer
-              (run-with-timer 2 2 #'k8s--log-tick (current-buffer))))
+              k8s--log-container container)
+        (k8s--log-start))
       (pop-to-buffer buf)
-      (message "Tailing %s/%s[%s] — f=toggle follow, g=refresh, G=full, q=quit"
-               ns name container))))
+      (message "Streaming %s/%s[%s] — g=restart, q=quit" ns name container))))
 
 (defun k8s-pod-browse-at-point ()
   "Open a read-only filesystem browser for the pod at point."

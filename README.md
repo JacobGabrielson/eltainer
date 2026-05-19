@@ -32,7 +32,7 @@ can't do — `docker build` (BuildKit gRPC), `docker compose`, CLI
 plugins, `docker login` config writes, `DOCKER_HOST=ssh://…` transport,
 and `docker-credential-*` / kubeconfig-exec helper binaries.  Each is
 one clearly-named function in one place.  See
-[docs/direct-daemon-rewrite.md](docs/direct-daemon-rewrite.md) and
+[docs/architecture.md](docs/architecture.md) and
 [docs/merge-emak8s.md](docs/merge-emak8s.md).
 
 ## What you can do
@@ -176,7 +176,6 @@ converts to GIF.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).  Code lifted from emak8s (MIT) is
-relicensed under Apache 2.0 with attribution; the LICENSE on the
-upstream emak8s repo applies to any code there that hasn't been
-imported.
+Apache 2.0 — see [LICENSE](LICENSE).  The Kubernetes half originated
+in emak8s (MIT), now folded in here and relicensed under Apache 2.0
+with attribution; the original repo is archived.
