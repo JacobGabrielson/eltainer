@@ -252,6 +252,38 @@ Return (FIN OPCODE PAYLOAD END-POS) on success, nil if incomplete."
   :type 'number
   :group 'k8s)
 
+(defcustom k8s-exec-shell-candidates
+  '("/bin/sh"
+    "/bin/bash"
+    "/bin/ash"
+    "/busybox/sh"
+    "/usr/bin/sh"
+    "/usr/bin/bash")
+  "Shell paths probed in order when the user picks `e' on a pod.
+The first candidate whose `<shell> -c true' returns exit 0 is used.
+Distroless / scratch images have *no* shell at any of these paths;
+`k8s-exec-find-shell' returns nil for those.  Customize to bias the
+list (e.g. put `/bin/bash' first for bash-only images)."
+  :type '(repeat string)
+  :group 'k8s)
+
+(defun k8s-exec-find-shell (conn ns pod container)
+  "Probe CONTAINER in POD/NS for a working shell.
+Returns the first path from `k8s-exec-shell-candidates' that
+successfully runs `<path> -c true', or nil if none do.  Each probe
+is a full WebSocket exec round-trip, so this can take a second
+or two for distroless images where every candidate must be tried."
+  (cl-some
+   (lambda (path)
+     (let ((res (ignore-errors
+                  (k8s-exec conn ns pod container
+                            (list path "-c" "true") 5))))
+       (and res
+            (k8s-exec-result-exit-code res)
+            (= (k8s-exec-result-exit-code res) 0)
+            path)))
+   k8s-exec-shell-candidates))
+
 (defun k8s-exec--build-path (ns pod container command)
   "Build the K8s exec URL path with query params."
   (let ((cmd-params
@@ -444,12 +476,48 @@ Signals an error if the connection or WebSocket handshake fails."
           (eltainer-terminal-feed (k8s-exec--itty-buffer itty) body))
          ;; channel 3 = exec status (success/failure JSON).
          ((= channel 3)
-          (when (buffer-live-p (k8s-exec--itty-buffer itty))
-            (with-current-buffer (k8s-exec--itty-buffer itty)
-              (let ((inhibit-read-only t))
-                (goto-char (point-max))
-                (insert (propertize (format "\n[k8s exec: %s]\n" body)
-                                    'font-lock-face 'eltainer-dim))))))))))))
+          (k8s-exec-interactive--render-status itty body))))))))
+
+(defun k8s-exec-interactive--render-status (itty body)
+  "Render the channel-3 status JSON BODY at the end of ITTY's buffer.
+Parses the v1.Status object; for Success we say so quietly, for
+Failure we extract the human message and call out the
+no-shell-in-the-image case specifically."
+  (when (buffer-live-p (k8s-exec--itty-buffer itty))
+    (let* ((status (ignore-errors
+                     (let ((json-object-type 'alist)
+                           (json-array-type 'vector)
+                           (json-key-type 'symbol))
+                       (json-read-from-string body))))
+           (st  (cdr (assq 'status  status)))
+           (msg (cdr (assq 'message status)))
+           (rendered
+            (cond
+             ((null status)
+              (format "[k8s exec: %s]" body))
+             ((equal st "Success")
+              "[k8s exec: process exited 0]")
+             ((and msg
+                   (or (string-match-p "executable file not found" msg)
+                       (string-match-p "no such file or directory" msg)
+                       (string-match-p "starting container process" msg)))
+              (concat
+               "[k8s exec: no shell found in this container image]\n"
+               "  → looks distroless / scratch — there's no `/bin/sh' (or any\n"
+               "    of `k8s-exec-shell-candidates') to exec into.  Workarounds:\n"
+               "      1. exec a real binary the image *does* ship (C-u e)\n"
+               "      2. attach a sidecar shell:\n"
+               "         kubectl debug --image=busybox -it <pod> --target=<container>\n"
+               "  raw: " msg))
+             (msg
+              (format "[k8s exec: %s]" msg))
+             (t
+              (format "[k8s exec: %s]" body)))))
+      (with-current-buffer (k8s-exec--itty-buffer itty)
+        (let ((inhibit-read-only t))
+          (goto-char (point-max))
+          (insert (propertize (concat "\n" rendered "\n")
+                              'font-lock-face 'eltainer-dim)))))))
 
 (defun k8s-exec-interactive--sentinel (itty _proc _event)
   "Mark ITTY closed when the underlying network process exits."
