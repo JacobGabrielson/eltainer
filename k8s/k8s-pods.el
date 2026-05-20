@@ -153,6 +153,33 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
       (mapcar (lambda (c) (cdr (assq 'name c)))
               (append containers nil)))))
 
+(defun k8s--pod-default-container (pod containers)
+  "Return the default container name for POD given its CONTAINERS list.
+Honors the `kubectl.kubernetes.io/default-container' annotation when it
+names a real container (this is what `kubectl' itself defaults to);
+otherwise falls back to the first container in the spec."
+  (let ((annotated
+         (cdr (assq 'kubectl.kubernetes.io/default-container
+                    (cdr (assq 'annotations (cdr (assq 'metadata pod))))))))
+    (if (and annotated (member annotated containers))
+        annotated
+      (car containers))))
+
+(defun k8s--read-pod-container (action ns pod-name pod containers)
+  "Read a container name for ACTION on pod NS/POD-NAME.
+Single-container pods return their only container with no prompt.
+For multi-container pods the default (the
+`kubectl.kubernetes.io/default-container' annotation, else the first
+container) is listed first — so a completion UI highlights it — and
+named in the prompt, so a bare RET selects it."
+  (if (= 1 (length containers))
+      (car containers)
+    (let* ((default (k8s--pod-default-container pod containers))
+           (ordered (cons default (remove default containers))))
+      (completing-read
+       (format-prompt "%s container in %s/%s" default action ns pod-name)
+       ordered nil t nil nil default))))
+
 (defvar-local k8s--log-conn nil "Connection for log buffer.")
 (defvar-local k8s--log-ns nil "Namespace for log buffer.")
 (defvar-local k8s--log-pod nil "Pod name for log buffer.")
@@ -244,11 +271,9 @@ TAIL-LINES bounds the initial history (default 500)."
            (name (k8s--resource-name pod))
            (ns (k8s--resource-namespace pod))
            (containers (k8s--pod-container-names pod))
-           (container (if (= (length containers) 1)
-                          (car containers)
-                        (completing-read
-                         (format "Container (%s): " name)
-                         containers nil t nil nil (car containers))))
+           (container (and containers
+                           (k8s--read-pod-container "Logs for" ns name
+                                                    pod containers)))
            (conn (k8s--ensure-connection))
            (buf (get-buffer-create
                  (format "*k8s:logs:%s/%s[%s]*" ns name container))))
@@ -298,12 +323,9 @@ you know exactly what binary the image has."
            (name (k8s--resource-name pod))
            (ns (k8s--resource-namespace pod))
            (containers (k8s--pod-container-names pod))
-           (container (cond
-                       ((null containers) nil)
-                       ((= 1 (length containers)) (car containers))
-                       (t (completing-read
-                           (format "Container in %s/%s: " ns name)
-                           containers nil t nil nil (car containers)))))
+           (container (and containers
+                           (k8s--read-pod-container "Exec" ns name
+                                                    pod containers)))
            (conn (k8s--ensure-connection))
            (cmd
             (cond
