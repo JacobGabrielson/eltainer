@@ -110,11 +110,16 @@ commentary for why eat is the sole supported backend.")
 SEND-FN takes one string argument and is responsible for delivering
 the bytes to the remote — used by callers that need framed I/O
 (e.g. WebSocket channel-0 frames for k8s exec) rather than the raw
-bytes `eltainer-terminal-bind' defaults to."
+bytes `eltainer-terminal-bind' defaults to.
+
+Also switches the buffer into `eat-semi-char-mode' so keystrokes are
+actually captured and forwarded — without this the buffer stays in
+eat's read-only navigation mode and the user can't type."
   (with-current-buffer buffer
     (eat-term-set-parameter
      eat-terminal 'input-function
-     (lambda (_term str) (funcall send-fn str)))))
+     (lambda (_term str) (funcall send-fn str)))
+    (eat-semi-char-mode)))
 
 (provide 'eltainer-terminal)
 ;;; eltainer-terminal.el ends here
