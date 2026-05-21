@@ -165,20 +165,95 @@ otherwise falls back to the first container in the spec."
         annotated
       (car containers))))
 
+;;; --- Container picker buffer -----------------------------------------------
+;;
+;; A self-contained picker buffer (like the `b' kubeconfig-context
+;; picker) rather than `completing-read' — so it works identically no
+;; matter what, or whether, the user has a minibuffer completion UI
+;; (vertico / fido / plain) configured.  `k8s--read-pod-container'
+;; pops the buffer and blocks in `recursive-edit'; RET / q hand the
+;; result back through `k8s--container-pick-choice'.
+
+(defvar k8s--container-pick-choice nil
+  "Internal carrier for the container chosen in the picker buffer.
+Dynamically bound by `k8s--read-pod-container' and set by the
+picker commands while its `recursive-edit' is active.")
+
+(defvar-keymap k8s-container-picker-mode-map
+  :parent special-mode-map
+  "RET" #'k8s-container-pick-select
+  "n"   #'next-line
+  "p"   #'previous-line
+  "j"   #'next-line
+  "k"   #'previous-line
+  "q"   #'k8s-container-pick-cancel)
+
+(define-derived-mode k8s-container-picker-mode special-mode "K8s:Container"
+  "Picker buffer for choosing a container in a multi-container pod."
+  (setq-local truncate-lines t))
+
+(defun k8s-container-pick-select ()
+  "Select the container on the current line and end the picker."
+  (interactive)
+  (let ((c (get-text-property (line-beginning-position) 'k8s-container)))
+    (unless c (user-error "Not on a container line"))
+    (setq k8s--container-pick-choice c)
+    (exit-recursive-edit)))
+
+(defun k8s-container-pick-cancel ()
+  "Cancel the container picker."
+  (interactive)
+  (setq k8s--container-pick-choice nil)
+  (exit-recursive-edit))
+
 (defun k8s--read-pod-container (action ns pod-name pod containers)
   "Read a container name for ACTION on pod NS/POD-NAME.
 Single-container pods return their only container with no prompt.
-For multi-container pods the default (the
-`kubectl.kubernetes.io/default-container' annotation, else the first
-container) is listed first — so a completion UI highlights it — and
-named in the prompt, so a bare RET selects it."
+For multi-container pods, pops a picker buffer listing every
+container — the default (the `kubectl.kubernetes.io/default-container'
+annotation, else the first spec container) listed first and tagged,
+with point on it so a bare RET selects it.  Navigate with n/p, q
+cancels."
   (if (= 1 (length containers))
       (car containers)
     (let* ((default (k8s--pod-default-container pod containers))
-           (ordered (cons default (remove default containers))))
-      (completing-read
-       (format-prompt "%s container in %s/%s" default action ns pod-name)
-       ordered nil t nil nil default))))
+           (ordered (cons default (remove default containers)))
+           (buf (get-buffer-create "*eltainer:container*"))
+           (k8s--container-pick-choice nil)
+           (saved-config (current-window-configuration)))
+      (with-current-buffer buf
+        (k8s-container-picker-mode)
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize
+                   (format "%s — choose a container in %s/%s\n"
+                           action ns pod-name)
+                   'font-lock-face 'k8s-section-heading))
+          (insert (propertize "  RET select   n/p move   q cancel\n\n"
+                              'font-lock-face 'k8s-dim))
+          (dolist (c ordered)
+            (let ((start (point)))
+              (insert "  "
+                      (propertize c 'font-lock-face 'k8s-resource-name)
+                      (if (equal c default)
+                          (propertize "   (default)" 'font-lock-face 'k8s-dim)
+                        "")
+                      "\n")
+              (add-text-properties start (point)
+                                   (list 'k8s-container c))))
+          ;; Point on the first (default) container row.
+          (goto-char (point-min))
+          (forward-line 3)))
+      (let ((win (display-buffer
+                  buf '((display-buffer-below-selected)
+                        (window-height . fit-window-to-buffer)))))
+        (select-window win)
+        (unwind-protect
+            (recursive-edit)
+          (set-window-configuration saved-config)
+          (when (buffer-live-p buf) (kill-buffer buf))))
+      (or k8s--container-pick-choice
+          (user-error "Container selection cancelled")))))
 
 (defvar-local k8s--log-conn nil "Connection for log buffer.")
 (defvar-local k8s--log-ns nil "Namespace for log buffer.")

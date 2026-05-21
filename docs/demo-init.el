@@ -44,10 +44,9 @@
 (when (fboundp 'scroll-bar-mode) (scroll-bar-mode -1))
 (when (fboundp 'blink-cursor-mode) (blink-cursor-mode -1))
 
-;; `fido-vertical-mode' (built-in) gives the minibuffer a live vertical
-;; candidate list — so the multi-container picker in the exec scene
-;; actually shows `app' / `sidecar' on screen instead of a bare prompt.
-(when (fboundp 'fido-vertical-mode) (fido-vertical-mode 1))
+;; Match the user's everyday look — dracula — and `agg' renders the
+;; cast with its matching `dracula' palette (see record-demo.sh).
+(ignore-errors (load-theme 'dracula t))
 
 (defun demo--type (proc str)
   "Send STR to PROC one character at a time, mimicking human typing."
@@ -189,13 +188,14 @@ PODS-BUF is the `*k8s:pods*' buffer to return to."
     (pop-to-buffer pods-buf)
     (when (demo--goto-pod "duo-box")
       (sit-for 0.8)
-      ;; `e' on a multi-container pod prompts for the container.
-      ;; fido shows `app' / `sidecar'; queue RET so the picker is on
-      ;; screen ~2s before we accept the highlighted default (`app').
-      ;; Call the command directly rather than via `execute-kbd-macro'
-      ;; — a running keyboard macro suppresses redisplay, so the
-      ;; minibuffer picker would never actually draw on screen.
-      (demo--queue-keys 2.0 "RET")
+      ;; `e' on a multi-container pod pops the container picker buffer
+      ;; (app / sidecar).  Queue `n' to move off the default to
+      ;; `sidecar', then RET to select it — showing the picker is
+      ;; navigable.  Call the command directly rather than via
+      ;; `execute-kbd-macro': a running keyboard macro suppresses
+      ;; redisplay, so the picker would never actually draw on screen.
+      (demo--queue-keys 2.0 "n")            ; move to `sidecar'
+      (demo--queue-keys 3.4 "RET")          ; select it
       (call-interactively #'k8s-pod-exec-at-point)
       ;; k8s-pod-exec-at-point probed for a shell and opened the
       ;; exec buffer; surface it and drive one command.

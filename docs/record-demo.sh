@@ -113,7 +113,7 @@ agg \
   --font-size 16 \
   --line-height 1.3 \
   --speed 1.0 \
-  --theme monokai \
+  --theme dracula \
   "$cast" "$gif"
 
 echo "wrote $gif ($(du -h "$gif" | cut -f1))"
