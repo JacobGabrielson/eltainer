@@ -45,7 +45,7 @@ Total runtime is ~35 s.
 | 5 | Back, switch context | ~3 s | Back on the dashboard, `b' pops the context picker, the kind context is highlighted, RET commits, dashboard re-renders against the new cluster. |
 | 6 | k8s pods on the new cluster | ~1.5 s | `k' lands on `*k8s:pods*' against the kind cluster — same UI, different pods. |
 | 7 | Stream pod logs | ~4 s | Point moves to `log-ticker', `l' opens `*k8s:logs:default/log-ticker[ticker]*'; live tick lines stream in.  `q' to dismiss. |
-| 8 | Multi-container exec | ~7 s | Point moves to `duo-box', `e' pops the container picker buffer (`app' / `sidecar', `app' tagged default); `n' moves to `sidecar', RET selects it; eltainer probes for a shell, the TTY exec buffer opens, `hostname' is typed, then `exit'. |
+| 8 | Multi-container exec | ~8 s | Point moves to `duo-box', `e' pops the container picker buffer (`app' / `sidecar', `app' tagged default); `n' moves to `sidecar', RET selects it.  Then the command prompt appears pre-filled with `/bin/sh'; RET accepts it, eltainer probes for a shell, the TTY exec buffer opens, `hostname' is typed, then `exit'. |
 | 9 | Quit | <1 s | `kill-emacs 0', asciinema returns, agg builds the gif. |
 
 ## What's deliberately not shown

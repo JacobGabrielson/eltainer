@@ -188,14 +188,16 @@ PODS-BUF is the `*k8s:pods*' buffer to return to."
     (pop-to-buffer pods-buf)
     (when (demo--goto-pod "duo-box")
       (sit-for 0.8)
-      ;; `e' on a multi-container pod pops the container picker buffer
-      ;; (app / sidecar).  Queue `n' to move off the default to
-      ;; `sidecar', then RET to select it — showing the picker is
-      ;; navigable.  Call the command directly rather than via
-      ;; `execute-kbd-macro': a running keyboard macro suppresses
-      ;; redisplay, so the picker would never actually draw on screen.
-      (demo--queue-keys 2.0 "n")            ; move to `sidecar'
-      (demo--queue-keys 3.4 "RET")          ; select it
+      ;; `e' on a multi-container pod: first the container picker
+      ;; buffer (app / sidecar), then the command prompt (default
+      ;; `/bin/sh').  Queue the answers — `n' RET to pick `sidecar'
+      ;; in the picker, then RET to accept the `/bin/sh' default.
+      ;; Call the command directly rather than via `execute-kbd-macro':
+      ;; a running keyboard macro suppresses redisplay, so neither
+      ;; prompt would actually draw on screen.
+      (demo--queue-keys 2.0 "n")            ; picker: move to `sidecar'
+      (demo--queue-keys 3.4 "RET")          ; picker: select it
+      (demo--queue-keys 5.0 "RET")          ; command prompt: accept /bin/sh
       (call-interactively #'k8s-pod-exec-at-point)
       ;; k8s-pod-exec-at-point probed for a shell and opened the
       ;; exec buffer; surface it and drive one command.

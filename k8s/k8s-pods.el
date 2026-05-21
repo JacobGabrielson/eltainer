@@ -378,17 +378,15 @@ TAIL-LINES bounds the initial history (default 500)."
 
 (defun k8s-pod-exec-at-point ()
   "Open an interactive TTY exec into the pod at point.
-For multi-container pods, prompts for the container; for single-
-container pods, uses the only one.
 
-Without a prefix arg, probes `k8s-exec-shell-candidates' synchronously
-and execs the first shell that exists (one round-trip per candidate
-until success — a couple of seconds at worst for distroless images
-where every candidate fails).  If none is found, signals a user-error
-explaining the image likely ships no shell.
+For multi-container pods a picker buffer chooses the container first;
+single-container pods skip it.
 
-With a prefix arg, prompts for the command verbatim — useful when
-you know exactly what binary the image has."
+Then prompts for the command to run, pre-filled with `/bin/sh'.
+Accepting that default (a bare RET) triggers a shell probe — eltainer
+tries each entry in `k8s-exec-shell-candidates' and execs the first
+that exists, so the default still works on images whose shell isn't
+at /bin/sh.  Type anything else to run it verbatim."
   (interactive)
   (require 'k8s-exec)
   (let ((section (magit-current-section)))
@@ -402,26 +400,26 @@ you know exactly what binary the image has."
                            (k8s--read-pod-container "Exec" ns name
                                                     pod containers)))
            (conn (k8s--ensure-connection))
+           (input (read-shell-command (format "Exec in %s/%s: " ns name)
+                                      "/bin/sh"))
            (cmd
-            (cond
-             (current-prefix-arg
-              (split-string-shell-command
-               (read-shell-command (format "Exec in %s/%s: " ns name)
-                                   "/bin/sh")))
-             (t
-              (message "k8s exec: probing for a shell in %s/%s ..." ns name)
-              (let ((shell (k8s-exec-find-shell conn ns name container)))
-                (unless shell
-                  (user-error
-                   "No shell in %s/%s: tried %s.  Image is likely \
-distroless/scratch — retry with C-u %s to exec a specific binary, \
-or try `kubectl debug --image=busybox -it %s --target=%s'"
-                   ns name
-                   (mapconcat #'identity k8s-exec-shell-candidates ", ")
-                   (key-description (this-command-keys))
-                   name (or container "<container>")))
-                (message "k8s exec: using %s" shell)
-                (list shell))))))
+            (if (equal input "/bin/sh")
+                ;; The default — find a shell that actually exists.
+                (progn
+                  (message "k8s exec: probing for a shell in %s/%s ..."
+                           ns name)
+                  (let ((shell (k8s-exec-find-shell conn ns name container)))
+                    (unless shell
+                      (user-error
+                       "No shell in %s/%s: tried %s.  Image is likely \
+distroless/scratch — re-run `e' and type a binary the image ships, \
+or `kubectl debug --image=busybox -it %s --target=%s'"
+                       ns name
+                       (mapconcat #'identity k8s-exec-shell-candidates ", ")
+                       name (or container "<container>")))
+                    (message "k8s exec: using %s" shell)
+                    (list shell)))
+              (split-string-shell-command input))))
       (k8s-exec-interactive conn ns name container cmd))))
 
 ;;; ---------------------------------------------------------------------------
