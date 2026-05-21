@@ -93,7 +93,8 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
           (insert (propertize (format "%s=%s\n" (car pair) (cdr pair))
                               'font-lock-face 'k8s-dim))
           (setq first nil))))
-    ;; Containers
+    ;; Containers — each as its own `container' subsection, so point
+    ;; resting on one lets `l' / `e' / `f' target it directly.
     (when statuses
       (insert (propertize "    Containers:\n" 'font-lock-face 'k8s-dim))
       (seq-doseq (cs statuses)
@@ -101,13 +102,14 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
               (image (cdr (assq 'image cs)))
               (ready (cdr (assq 'ready cs)))
               (rc (or (cdr (assq 'restartCount cs)) 0)))
-          (insert (propertize
-                   (format "      %-20s %-40s ready=%-5s restarts=%d\n"
-                           cname
-                           (or image "?")
-                           (if (eq ready t) "yes" "no")
-                           rc)
-                   'font-lock-face 'k8s-dim)))))
+          (magit-insert-section (container cname)
+            (insert (propertize
+                     (format "      %-20s %-40s ready=%-5s restarts=%d\n"
+                             cname
+                             (or image "?")
+                             (if (eq ready t) "yes" "no")
+                             rc)
+                     'font-lock-face 'k8s-dim))))))
     (insert "\n")))
 
 ;;; ---------------------------------------------------------------------------
@@ -205,6 +207,25 @@ picker commands while its `recursive-edit' is active.")
   (interactive)
   (setq k8s--container-pick-choice nil)
   (exit-recursive-edit))
+
+(defun k8s--pod+container-at-point ()
+  "Resolve the section at point to a (POD . CONTAINER) cons.
+POD is the pod alist.  CONTAINER is a container-name string when
+point rests on a `container' subsection inside an expanded pod, or
+nil when point is on the `pod' line itself (the caller then picks a
+container).  Signals a `user-error' when point is on neither."
+  (let ((sec (magit-current-section)))
+    (unless sec (user-error "Not on a pod"))
+    (pcase (oref sec type)
+      ('container
+       (let ((cname (oref sec value))
+             (anc (oref sec parent)))
+         (while (and anc (not (eq (oref anc type) 'pod)))
+           (setq anc (oref anc parent)))
+         (unless anc (user-error "Container section has no parent pod"))
+         (cons (oref anc value) cname)))
+      ('pod (cons (oref sec value) nil))
+      (_ (user-error "Not on a pod or container")))))
 
 (defun k8s--read-pod-container (action ns pod-name pod containers)
   "Read a container name for ACTION on pod NS/POD-NAME.
@@ -337,18 +358,20 @@ TAIL-LINES bounds the initial history (default 500)."
   (add-hook 'kill-buffer-hook #'k8s--log-cleanup nil t))
 
 (defun k8s-pod-view-logs ()
-  "Show tailing logs for the pod at point."
+  "Show tailing logs for the pod at point.
+With point on a container subsection (inside an expanded pod), logs
+that container directly; on the pod line, picks a container."
   (interactive)
-  (let ((section (magit-current-section)))
-    (unless (and section (eq (oref section type) 'pod))
-      (user-error "Not on a pod"))
-    (let* ((pod (oref section value))
-           (name (k8s--resource-name pod))
+  (let* ((target (k8s--pod+container-at-point))
+         (pod (car target))
+         (preselected (cdr target)))
+    (let* ((name (k8s--resource-name pod))
            (ns (k8s--resource-namespace pod))
            (containers (k8s--pod-container-names pod))
-           (container (and containers
-                           (k8s--read-pod-container "Logs for" ns name
-                                                    pod containers)))
+           (container (or preselected
+                          (and containers
+                               (k8s--read-pod-container "Logs for" ns name
+                                                        pod containers))))
            (conn (k8s--ensure-connection))
            (buf (get-buffer-create
                  (format "*k8s:logs:%s/%s[%s]*" ns name container))))
@@ -363,24 +386,27 @@ TAIL-LINES bounds the initial history (default 500)."
       (message "Streaming %s/%s[%s] — g=restart, q=quit" ns name container))))
 
 (defun k8s-pod-browse-at-point ()
-  "Open a read-only filesystem browser for the pod at point."
+  "Open a read-only filesystem browser for the pod at point.
+With point on a container subsection, browses that container
+directly; on the pod line, picks a container."
   (interactive)
-  (let ((section (magit-current-section)))
-    (unless (and section (eq (oref section type) 'pod))
-      (user-error "Not on a pod"))
-    (let* ((pod (oref section value))
-           (name (k8s--resource-name pod))
-           (ns (k8s--resource-namespace pod))
-           (containers (k8s--pod-container-names pod))
-           (container (k8s-fs--pick-container ns name containers))
-           (conn (k8s--ensure-connection)))
-      (k8s-pod-browse conn ns name container "/"))))
+  (let* ((target (k8s--pod+container-at-point))
+         (pod (car target))
+         (preselected (cdr target))
+         (name (k8s--resource-name pod))
+         (ns (k8s--resource-namespace pod))
+         (containers (k8s--pod-container-names pod))
+         (container (or preselected
+                        (k8s-fs--pick-container ns name containers)))
+         (conn (k8s--ensure-connection)))
+    (k8s-pod-browse conn ns name container "/")))
 
 (defun k8s-pod-exec-at-point ()
   "Open an interactive TTY exec into the pod at point.
 
-For multi-container pods a picker buffer chooses the container first;
-single-container pods skip it.
+With point on a container subsection (inside an expanded pod) that
+container is used directly.  Otherwise, for multi-container pods a
+picker buffer chooses the container; single-container pods skip it.
 
 Then prompts for the command to run, pre-filled with `/bin/sh'.
 Accepting that default (a bare RET) triggers a shell probe — eltainer
@@ -389,16 +415,16 @@ that exists, so the default still works on images whose shell isn't
 at /bin/sh.  Type anything else to run it verbatim."
   (interactive)
   (require 'k8s-exec)
-  (let ((section (magit-current-section)))
-    (unless (and section (eq (oref section type) 'pod))
-      (user-error "Not on a pod"))
-    (let* ((pod (oref section value))
-           (name (k8s--resource-name pod))
+  (let* ((target (k8s--pod+container-at-point))
+         (pod (car target))
+         (preselected (cdr target)))
+    (let* ((name (k8s--resource-name pod))
            (ns (k8s--resource-namespace pod))
            (containers (k8s--pod-container-names pod))
-           (container (and containers
-                           (k8s--read-pod-container "Exec" ns name
-                                                    pod containers)))
+           (container (or preselected
+                          (and containers
+                               (k8s--read-pod-container "Exec" ns name
+                                                        pod containers))))
            (conn (k8s--ensure-connection))
            (input (read-shell-command (format "Exec in %s/%s: " ns name)
                                       "/bin/sh"))
