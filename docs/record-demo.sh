@@ -44,6 +44,27 @@ YAML
   kubectl wait --for=condition=Ready pod/log-ticker --timeout=60s >/dev/null
 fi
 
+# Make sure the two-container pod exists — the `e' scene shows the
+# container picker choosing between its `app' and `sidecar' containers.
+if ! kubectl get pod duo-box >/dev/null 2>&1; then
+  kubectl apply -f - <<'YAML' >/dev/null
+apiVersion: v1
+kind: Pod
+metadata:
+  name: duo-box
+spec:
+  restartPolicy: Always
+  containers:
+  - name: app
+    image: alpine:3.20
+    command: ["/bin/sh", "-c", "echo app-container; sleep infinity"]
+  - name: sidecar
+    image: busybox:1.37
+    command: ["/bin/sh", "-c", "echo sidecar-container; sleep infinity"]
+YAML
+  kubectl wait --for=condition=Ready pod/duo-box --timeout=60s >/dev/null
+fi
+
 rm -f "$cast" "$gif"
 
 # Emacs needs DOCKER_CLI_HINTS off so its child-process callers don't

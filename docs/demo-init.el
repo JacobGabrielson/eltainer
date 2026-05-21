@@ -1,7 +1,7 @@
 ;;; demo-init.el --- Scripted demo of eltainer (docker + k8s + switch) -*- lexical-binding: t -*-
 ;;
-;; Drives a single asciinema-recordable scenario covering all three
-;; pillars of the post-merge eltainer UI:
+;; Drives a single asciinema-recordable scenario covering the
+;; post-merge eltainer UI:
 ;;
 ;;   1. `M-x eltainer'    — dashboard listing both backends + active context
 ;;   2. `c'               — docker containers view
@@ -10,7 +10,9 @@
 ;;   5. back to the dashboard, press `b' to switch k8s context
 ;;   6. pick the kind cluster from the context picker
 ;;   7. press `k' — kubernetes pods view, now showing the kind cluster
-;;   8. kill emacs so asciinema's `rec --command' terminates
+;;   8. `l' on log-ticker — stream a pod's logs
+;;   9. `e' on duo-box — the multi-container picker, then a TTY exec
+;;  10. kill emacs so asciinema's `rec --command' terminates
 ;;
 ;; Invoked by docs/record-demo.sh.
 
@@ -42,6 +44,11 @@
 (when (fboundp 'scroll-bar-mode) (scroll-bar-mode -1))
 (when (fboundp 'blink-cursor-mode) (blink-cursor-mode -1))
 
+;; `fido-vertical-mode' (built-in) gives the minibuffer a live vertical
+;; candidate list — so the multi-container picker in the exec scene
+;; actually shows `app' / `sidecar' on screen instead of a bare prompt.
+(when (fboundp 'fido-vertical-mode) (fido-vertical-mode 1))
+
 (defun demo--type (proc str)
   "Send STR to PROC one character at a time, mimicking human typing."
   (dolist (ch (string-to-list str))
@@ -52,6 +59,18 @@
   "Press a key in the current buffer and pause briefly."
   (execute-kbd-macro (kbd key))
   (sit-for (or pause 0.6)))
+
+(defun demo--queue-keys (delay keys)
+  "Feed KEYS into the input stream DELAY seconds from now.
+Used to answer a minibuffer prompt that a demo command blocks on:
+by the time the timer fires the command is already parked in
+`completing-read', so the queued keys land there.  This lets the
+picker stay on screen for DELAY seconds before being dismissed."
+  (run-at-time delay nil
+               (lambda ()
+                 (setq unread-command-events
+                       (nconc unread-command-events
+                              (listify-key-sequence (kbd keys)))))))
 
 (defun demo--goto-container (name)
   "Move point to the magit-section heading of the container named NAME.
@@ -159,8 +178,48 @@ line that happens to contain NAME."
           (when lbuf
             (pop-to-buffer lbuf)
             (sit-for 3.5))                  ; let a few tick lines stream
-          (demo--press "q" 0.6)))))         ; quit the log buffer
+          (demo--press "q" 0.6)))           ; quit the log buffer
+      (demo--k8s-exec-segment buf)))
   (sit-for 0.5))
+
+(defun demo--k8s-exec-segment (pods-buf)
+  "Phase 3: `e' on the two-container `duo-box' pod — picker, then exec.
+PODS-BUF is the `*k8s:pods*' buffer to return to."
+  (when (buffer-live-p pods-buf)
+    (pop-to-buffer pods-buf)
+    (when (demo--goto-pod "duo-box")
+      (sit-for 0.8)
+      ;; `e' on a multi-container pod prompts for the container.
+      ;; fido shows `app' / `sidecar'; queue RET so the picker is on
+      ;; screen ~2s before we accept the highlighted default (`app').
+      ;; Call the command directly rather than via `execute-kbd-macro'
+      ;; — a running keyboard macro suppresses redisplay, so the
+      ;; minibuffer picker would never actually draw on screen.
+      (demo--queue-keys 2.0 "RET")
+      (call-interactively #'k8s-pod-exec-at-point)
+      ;; k8s-pod-exec-at-point probed for a shell and opened the
+      ;; exec buffer; surface it and drive one command.
+      (let ((dl (+ (float-time) 10.0)) ebuf)
+        (while (and (< (float-time) dl)
+                    (not (setq ebuf
+                               (cl-find-if
+                                (lambda (b)
+                                  (string-prefix-p
+                                   "*k8s:exec:default/duo-box"
+                                   (buffer-name b)))
+                                (buffer-list)))))
+          (sit-for 0.1))
+        (when ebuf
+          (pop-to-buffer ebuf)
+          (sit-for 1.6)
+          (let ((proc (cdr (assq ebuf k8s-exec-interactive--processes))))
+            (when (and proc (process-live-p proc))
+              (process-send-string
+               proc (k8s-exec-interactive--encode-stdin "hostname\n"))
+              (sit-for 1.6)
+              (process-send-string
+               proc (k8s-exec-interactive--encode-stdin "exit\n"))
+              (sit-for 1.0))))))))
 
 (defun demo--run ()
   (condition-case err
@@ -174,7 +233,7 @@ line that happens to contain NAME."
      (kill-emacs 1))))
 
 ;; Hard deadline so a hung demo doesn't leave asciinema parked forever.
-(run-at-time 60 nil
+(run-at-time 90 nil
              (lambda ()
                (message "demo: hard timeout, killing")
                (kill-emacs 2)))
