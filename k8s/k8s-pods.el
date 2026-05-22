@@ -32,6 +32,10 @@ nil when the Summary API is unavailable.")
   "Hash \"NS/POD\" -> network-rate history plist (see `k8s-metrics-net-sample').
 Persists across metrics polls so the network sparkline has a trend.")
 
+(defvar-local k8s--cm-history nil
+  "Hash \"NS/POD/CONTAINER\" -> cpu/mem history plist (see `k8s-metrics-cm-sample').
+Persists across metrics polls so the cpu/mem trend sparklines have a trend.")
+
 (defvar-local k8s--metrics-timer nil
   "Repeating timer polling metrics for this pods buffer.")
 
@@ -139,7 +143,10 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
                                        (gethash podkey k8s--metrics-cache)))))
                (disk (and summary-pod
                           (k8s-metrics--summary-container-disk
-                           summary-pod cname))))
+                           summary-pod cname)))
+               (cm-hist (and k8s--cm-history
+                             (gethash (concat podkey "/" cname)
+                                      k8s--cm-history))))
           (magit-insert-section (container cname)
             (insert (propertize
                      (format "      %-20s %-40s ready=%-5s restarts=%d\n"
@@ -149,7 +156,7 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
                              rc)
                      'font-lock-face 'k8s-dim))
             (when-let ((lines (k8s-metrics-container-lines
-                               pod cname usage disk)))
+                               pod cname usage disk cm-hist)))
               (insert lines))))))
     (insert "\n")))
 
@@ -213,6 +220,20 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
                                    (car net) (cdr net) now))))
      summary)))
 
+(defun k8s--metrics-update-cm-history (metrics)
+  "Fold the per-container cpu/mem in METRICS into `k8s--cm-history'.
+METRICS is the hash from `k8s-metrics-collect': \"NS/POD\" ->
+\((CNAME . (CPU . MEM))...)."
+  (unless k8s--cm-history
+    (setq k8s--cm-history (make-hash-table :test 'equal)))
+  (maphash
+   (lambda (podkey conts)
+     (dolist (c conts)
+       (k8s-metrics-cm-sample k8s--cm-history
+                              (concat podkey "/" (car c))
+                              (cadr c) (cddr c))))
+   metrics))
+
 (defun k8s--metrics-tick (buf)
   "Poll metrics for BUF and re-render.
 Fetches both metrics-server CPU/memory and the kubelet Summary API
@@ -225,7 +246,9 @@ stops only when neither is available."
             (let* ((conn (k8s--ensure-connection))
                    (m (k8s-metrics-collect conn k8s--namespace))
                    (s (k8s-metrics-collect-summary conn)))
-              (when m (setq k8s--metrics-cache m))
+              (when m
+                (setq k8s--metrics-cache m)
+                (k8s--metrics-update-cm-history m))
               (when s
                 (setq k8s--summary-cache s)
                 (k8s--metrics-update-net-history s))

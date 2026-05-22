@@ -96,10 +96,12 @@ dependency (see [Requirements](#requirements)).
 `TAB` on a pod expands it to show its containers, each as its own
 section — point on a container row makes `l` / `e` / `f` target that
 container directly (no picker).  Expanded containers also show live
-CPU, memory and disk gauges, and the pod gets a network rx/tx
-sparkline — CPU/memory need metrics-server, disk/network need the
-kubelet stats API; each degrades gracefully if unavailable.  `M`
-opens a focused, self-refreshing metrics buffer for the pod.
+CPU, memory and disk gauges (with trend sparklines), and the pod
+gets a network rx/tx sparkline — CPU/memory need metrics-server,
+disk/network need the kubelet stats API; each degrades gracefully if
+unavailable.  `M` opens a focused, self-refreshing metrics buffer
+for the pod; `?` → `o` (or `M-x k8s-nodes-metrics`) opens a
+cluster-wide per-node CPU/memory/disk view.
 
 ### Switching contexts
 

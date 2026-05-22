@@ -316,8 +316,11 @@ refresh.
      has an `ephemeral-storage' limit/request, else the raw number);
    - network: per-pod rx/tx **rate** + sparkline graph (§3a);
    - graceful degradation when `nodes/proxy` RBAC is missing.
-4. **Future** — a node-level metrics view (node CPU/mem/fs gauges);
-   optional CPU/memory trend sparklines next to their gauges.
+4. **Future polish** ✅ *(shipped)* — node-level metrics view
+   (`k8s-nodes-metrics`, per-node CPU/mem/fs gauges); CPU/memory
+   trend sparklines beside their gauges; the network line shows a
+   `(sampling…)` placeholder on the first poll instead of being
+   absent.
 
 ## 9. Open questions
 

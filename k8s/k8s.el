@@ -726,6 +726,7 @@ LINE-FN inserts one item."
 (declare-function k8s-pod-exec-at-point   "k8s-pods")
 (declare-function k8s-pod-browse-at-point "k8s-pods")
 (declare-function k8s-pod-metrics-at-point "k8s-pods")
+(declare-function k8s-nodes-metrics       "k8s-metrics")
 
 (defun k8s--section-type-at-point ()
   "Return the magit-section TYPE under point, or nil."
@@ -790,7 +791,8 @@ where the cursor is."
    ["Cluster"
     ("b" "Switch context" eltainer-switch-kubeconfig)
     ("w" "Toggle watch"   k8s-watch-toggle)
-    ("N" "Namespace"      k8s-set-namespace)]
+    ("N" "Namespace"      k8s-set-namespace)
+    ("o" "Node metrics"   k8s-nodes-metrics)]
    ["Buffer"
     ("g" "Refresh" revert-buffer)
     ("q" "Quit"    quit-window)]])
