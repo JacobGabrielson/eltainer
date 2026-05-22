@@ -160,8 +160,9 @@ appears on the 2nd poll, like the network sparkline.
 - Does `?stream=false` reliably populate `precpu_stats`?  If not,
   phase B computes CPU% only from the 2nd poll onward (same warm-up
   as the network sparkline — fine).
-- Memory denominator when the container is unlimited: show the raw
-  number (no bar), or gauge against host RAM?  Lean: raw number,
-  consistent with the k8s "no limit" fallback.
+- Memory denominator when the container is unlimited: **resolved** —
+  gauge against host RAM (basis `host'), since an unlimited container
+  genuinely could use the whole box.  Only when host RAM is also
+  unknown does it fall back to the raw number.
 - One `*docker:metrics:NAME*` buffer keyed by container name — names
   are unique per host, so that's safe (unlike image tags).

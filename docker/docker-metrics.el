@@ -80,10 +80,14 @@ previous sample for ID.  Returns — and stores — the render plist."
                        (cdr (assq 'cache mst)) 0))
          (mused (and musage (max 0 (- musage inactive))))
          (mlimit-raw (cdr (assq 'limit ms)))
-         ;; An unlimited container reports `limit' = host RAM.
-         (mlimit (when (and mlimit-raw host-mem
-                            (< mlimit-raw (* host-mem 0.99)))
-                   mlimit-raw))
+         ;; A container with no memory limit reports `limit' = host RAM;
+         ;; in that case gauge against the whole box (basis `host'),
+         ;; otherwise against the real limit (basis `limit').
+         (mlimit-real (when (and mlimit-raw host-mem
+                                 (< mlimit-raw (* host-mem 0.99)))
+                        mlimit-raw))
+         (mem-limit (or mlimit-real host-mem))
+         (mem-basis (if mlimit-real 'limit 'host))
          ;; --- network (sum every interface) ---
          (nets (cdr (assq 'networks stats)))
          (rx 0) (tx 0) (rx-drop 0) (tx-drop 0)
@@ -123,7 +127,7 @@ previous sample for ID.  Returns — and stores — the render plist."
                    :io-prev-rd (and have-io rd) :io-prev-wr (and have-io wr)
                    :ncpu ncpu :cpu-frac cpu-frac :cpu-pct cpu-pct
                    :throttle-pct thr-pct
-                   :mem-used mused :mem-limit mlimit
+                   :mem-used mused :mem-limit mem-limit :mem-basis mem-basis
                    :pids (cdr (assq 'current (cdr (assq 'pids_stats stats))))
                    :have-net have-net :have-io have-io
                    :net-rx-rate net-rx-rate :net-tx-rate net-tx-rate
@@ -197,7 +201,8 @@ Shows `(sampling…)' until the second poll gives the first rate."
       ;; Memory
       (when (plist-get m :mem-used)
         (push (eltainer-gauge-line "mem" (plist-get m :mem-used)
-                                   (plist-get m :mem-limit) 'limit
+                                   (plist-get m :mem-limit)
+                                   (plist-get m :mem-basis)
                                    #'eltainer-human-bytes
                                    (plist-get m :mem-hist))
               parts))
