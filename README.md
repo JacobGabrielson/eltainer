@@ -70,12 +70,19 @@ dashboard if that's what you want.
 | `s` `S` `r` `K` | Start / Stop / Restart / Kill container |
 | `l` | Tail logs (streaming, stdout / stderr demuxed) |
 | `e` | Exec a shell inside the container (TTY) |
+| `M` | Per-container metrics buffer (containers view) |
 | `j` `J` | Join / leave a network |
 
 Views auto-refresh as the daemon's `/events` stream tells us what
 changed (debounced).  The TTY exec lands in an
 [`eat`](https://codeberg.org/akib/emacs-eat) buffer — eat is a hard
 dependency (see [Requirements](#requirements)).
+
+`TAB` on a running container shows live gauges — CPU% (with a
+`throttled` note when it's hitting its CFS limit), memory, block-I/O
+and network throughput sparklines, and the PID count — polled from
+`/containers/{id}/stats`.  `M` opens a focused, self-refreshing
+metrics buffer for the container.
 
 ### Inside the k8s view
 
@@ -124,6 +131,7 @@ Same muscle memory as `b` in magit for branches.
 ```
 eltainer.el              Dashboard + `M-x eltainer'
 eltainer-ui.el           Shared faces, age-string, describe-value
+eltainer-gauge.el        Shared text gauges + sparklines for the metrics views
 eltainer-terminal.el     eat-backed terminal host for interactive exec
 eltainer-shell-helper.el Invoke external helpers (cred / exec plugins)
 reload.el                Dev helper: byte-compile + reload both halves
@@ -142,6 +150,7 @@ docker/
   docker-exec.el         Upgrade-hijacked /exec/{id}/start TTY
   docker-auth.el         ~/.docker/config.json + docker-credential-* helpers
   docker-pull.el         Streamed /images/create with per-layer progress
+  docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 
 k8s/

@@ -556,10 +556,19 @@ poll skipped"
                (revert-buffer))
       (message "eltainer: disconnect failed (%s → %s)" cname net))))
 
+(defun docker-container-metrics-at-point ()
+  "Open the per-container metrics buffer for the container at point."
+  (interactive)
+  (let ((c (docker--container-at-point)))
+    (docker-metrics-buffer (docker--ensure-config)
+                           (docker-container-id c)
+                           (docker-container-name c))))
+
 ;; Bind in the containers view (j = join, J = jettison).
 (keymap-set docker-containers-mode-map "j" #'docker-network-connect-at-point)
 (keymap-set docker-containers-mode-map "J" #'docker-network-disconnect-at-point)
 (keymap-set docker-containers-mode-map "e" #'docker-exec-at-point)
+(keymap-set docker-containers-mode-map "M" #'docker-container-metrics-at-point)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Transient dispatch
@@ -581,6 +590,7 @@ poll skipped"
    ("K" "Kill"         docker-kill-at-point)
    ("l" "Logs"         docker-logs-at-point)
    ("e" "Exec"         docker-exec-at-point)
+   ("M" "Metrics"      docker-container-metrics-at-point)
    ("i" "Inspect"      docker-inspect-at-point)
    ("d" "Remove"       docker-delete-at-point)
    ("j" "Join network" docker-network-connect-at-point)

@@ -229,5 +229,94 @@ Shows `(sampling…)' until the second poll gives the first rate."
               parts))
       (when parts (apply #'concat (nreverse parts))))))
 
+;;; ---------------------------------------------------------------------------
+;;; Per-container metrics buffer
+
+(defvar-local docker-metrics--cfg nil
+  "Docker connection config for the current metrics buffer.")
+(defvar-local docker-metrics--id nil
+  "Container id shown in the current metrics buffer.")
+(defvar-local docker-metrics--name nil
+  "Container name shown in the current metrics buffer.")
+(defvar-local docker-metrics--history nil
+  "Per-container metrics history hash for this buffer (one key).")
+(defvar-local docker-metrics--host-mem nil
+  "Cached daemon total RAM for the current metrics buffer.")
+(defvar-local docker-metrics--timer nil
+  "Repeating refresh timer for the current metrics buffer.")
+
+(defun docker-metrics--buffer-stop-timer ()
+  "Cancel the metrics buffer's refresh timer."
+  (when (timerp docker-metrics--timer)
+    (cancel-timer docker-metrics--timer))
+  (setq docker-metrics--timer nil))
+
+(defvar-keymap docker-metrics-mode-map
+  :parent special-mode-map
+  "g" #'docker-metrics-buffer-refresh
+  "q" #'quit-window)
+
+(define-derived-mode docker-metrics-mode special-mode "Docker:Metrics"
+  "Major mode for the per-container metrics buffer."
+  :group 'docker-metrics
+  (setq-local truncate-lines t)
+  (add-hook 'kill-buffer-hook #'docker-metrics--buffer-stop-timer nil t))
+
+(defun docker-metrics-buffer-refresh ()
+  "Re-fetch and re-render the current container metrics buffer."
+  (interactive)
+  (unless (derived-mode-p 'docker-metrics-mode)
+    (user-error "Not a docker metrics buffer"))
+  (let* ((cfg docker-metrics--cfg)
+         (id docker-metrics--id)
+         (name docker-metrics--name)
+         (stats (docker-container-stats cfg id))
+         (inhibit-read-only t)
+         (pt (point)))
+    (unless docker-metrics--history
+      (setq docker-metrics--history (make-hash-table :test 'equal)))
+    (unless docker-metrics--host-mem
+      (let ((info (docker-host-info cfg)))
+        (setq docker-metrics--host-mem
+              (and info (cdr (assq 'MemTotal info))))))
+    (erase-buffer)
+    (insert (propertize (format "Container  %s" name) 'font-lock-face 'bold)
+            (propertize "   g refreshes, q quits\n\n"
+                        'font-lock-face 'eltainer-gauge-empty))
+    (if (null stats)
+        (insert (propertize "  not running — no stats to show.\n"
+                            'font-lock-face 'eltainer-gauge-empty))
+      (let ((m (docker-metrics-sample docker-metrics--history id stats
+                                      docker-metrics--host-mem (float-time))))
+        (insert (or (docker-metrics-container-lines m)
+                    (propertize "  (sampling…)\n"
+                                'font-lock-face 'eltainer-gauge-empty)))))
+    (goto-char (min pt (point-max)))))
+
+(defun docker-metrics--buffer-start-timer ()
+  "(Re)start the metrics buffer's refresh timer."
+  (docker-metrics--buffer-stop-timer)
+  (let ((buf (current-buffer)))
+    (setq docker-metrics--timer
+          (run-at-time docker-metrics-refresh-interval
+                       docker-metrics-refresh-interval
+                       (lambda ()
+                         (when (buffer-live-p buf)
+                           (with-current-buffer buf
+                             (docker-metrics-buffer-refresh))))))))
+
+(defun docker-metrics-buffer (cfg id name)
+  "Open and display the metrics buffer for container NAME (ID) via CFG."
+  (let ((buf (get-buffer-create (format "*docker:metrics:%s*" name))))
+    (with-current-buffer buf
+      (docker-metrics-mode)
+      (setq docker-metrics--cfg cfg
+            docker-metrics--id id
+            docker-metrics--name name)
+      (docker-metrics-buffer-refresh)
+      (docker-metrics--buffer-start-timer))
+    (pop-to-buffer buf)
+    (message "docker metrics: %s — g refreshes, q quits" name)))
+
 (provide 'docker-metrics)
 ;;; docker-metrics.el ends here
