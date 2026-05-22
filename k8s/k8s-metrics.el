@@ -12,6 +12,7 @@
 ;; expose it — see the plan doc).
 
 (require 'cl-lib)
+(require 'eltainer-gauge)
 (require 'k8s-api)
 
 ;;; ---------------------------------------------------------------------------
@@ -21,55 +22,11 @@
   "Resource-usage gauges for the eltainer Kubernetes views."
   :group 'k8s)
 
-(defcustom k8s-metrics-gauge-width 16
-  "Width, in characters, of a usage gauge bar (excluding end-caps)."
-  :type 'integer
-  :group 'k8s-metrics)
-
-(defcustom k8s-metrics-gauge-style 'blocks
-  "How to draw gauge bars.
-`blocks' uses Unicode block elements with 1/8-cell precision;
-`ascii' uses plain `#' / `-' for fonts or terminals without the
-block glyphs."
-  :type '(choice (const blocks) (const ascii))
-  :group 'k8s-metrics)
-
 (defcustom k8s-metrics-refresh-interval 15
   "Seconds between metrics polls while a pods buffer is open.
 metrics-server itself only scrapes every ~15s, so polling faster
 buys nothing."
   :type 'integer
-  :group 'k8s-metrics)
-
-(defcustom k8s-metrics-history-length 24
-  "How many recent network-rate samples to keep per pod.
-The network sparkline draws (up to) this many points."
-  :type 'integer
-  :group 'k8s-metrics)
-
-(defconst k8s-metrics--mid-threshold 0.70
-  "Fraction at/above which a gauge turns from low to mid colour.")
-
-(defconst k8s-metrics--high-threshold 0.90
-  "Fraction at/above which a gauge turns to the high colour.")
-
-;;; ---------------------------------------------------------------------------
-;;; Faces
-
-(defface k8s-gauge-low '((t :inherit success))
-  "Face for the filled part of a gauge below the mid threshold."
-  :group 'k8s-metrics)
-
-(defface k8s-gauge-mid '((t :inherit warning))
-  "Face for the filled part of a gauge in the mid band."
-  :group 'k8s-metrics)
-
-(defface k8s-gauge-high '((t :inherit error))
-  "Face for the filled part of a gauge over the high threshold."
-  :group 'k8s-metrics)
-
-(defface k8s-gauge-empty '((t :inherit shadow))
-  "Face for the unfilled track of a gauge."
   :group 'k8s-metrics)
 
 ;;; ---------------------------------------------------------------------------
@@ -120,70 +77,6 @@ Returns nil when S is nil or unparseable.  Handles binary suffixes
   (if (numberp millicores)
       (format "%dm" (round millicores))
     "?"))
-
-(defun k8s-metrics--human-bytes (n)
-  "Format N bytes with a binary-unit suffix, e.g. \"218Mi\"."
-  (cond
-   ((not (numberp n)) "?")
-   ((< n 1024) (format "%dB" n))
-   ((< n (* 1024 1024)) (format "%dKi" (round (/ n 1024.0))))
-   ((< n (* 1024 1024 1024))
-    (format "%dMi" (round (/ n (* 1024.0 1024)))))
-   (t (format "%.1fGi" (/ n (* 1024.0 1024 1024))))))
-
-;;; ---------------------------------------------------------------------------
-;;; Gauge rendering
-
-(defun k8s-metrics--gauge-face (fraction)
-  "Return the gauge face for FRACTION (0.0..1.0)."
-  (cond
-   ((>= fraction k8s-metrics--high-threshold) 'k8s-gauge-high)
-   ((>= fraction k8s-metrics--mid-threshold)  'k8s-gauge-mid)
-   (t 'k8s-gauge-low)))
-
-(defun k8s-metrics--bar (fraction width)
-  "Return a propertized WIDTH-cell bar string for FRACTION (0.0..1.0)."
-  (let* ((f (max 0.0 (min 1.0 (or fraction 0.0))))
-         (face (k8s-metrics--gauge-face f)))
-    (pcase k8s-metrics-gauge-style
-      ('ascii
-       (let ((full (round (* f width))))
-         (concat (propertize (make-string full ?#) 'font-lock-face face)
-                 (propertize (make-string (- width full) ?-)
-                             'font-lock-face 'k8s-gauge-empty))))
-      (_
-       (let* ((eighths (round (* f width 8)))
-              (full (/ eighths 8))
-              (rem (% eighths 8))
-              (parts ["" "▏" "▎" "▍" "▌" "▋" "▊" "▉"])
-              (filled (concat (make-string full ?█)
-                              (unless (zerop rem) (aref parts rem))))
-              (empty (make-string (max 0 (- width (length filled))) ?░)))
-         (concat (propertize filled 'font-lock-face face)
-                 (propertize empty 'font-lock-face 'k8s-gauge-empty)))))))
-
-(defun k8s-metrics-gauge (fraction)
-  "Return a complete gauge string (end-caps + bar) for FRACTION."
-  (concat (propertize "▏" 'font-lock-face 'k8s-gauge-empty)
-          (k8s-metrics--bar fraction k8s-metrics-gauge-width)
-          (propertize "▕" 'font-lock-face 'k8s-gauge-empty)))
-
-(defun k8s-metrics--sparkline (values &optional width)
-  "Render VALUES (numbers, oldest first) as a block-character sparkline.
-WIDTH caps to the most-recent values.  Bars scale to the window
-peak, so the shape stays legible at any throughput."
-  (if (null values)
-      ""
-    (let* ((bars "▁▂▃▄▅▆▇█")
-           (vs (if (and width (> (length values) width))
-                   (last values width)
-                 values))
-           (peak (apply #'max 1.0 (mapcar #'float vs))))
-      (mapconcat
-       (lambda (v)
-         (char-to-string
-          (aref bars (min 7 (max 0 (floor (* (/ (float v) peak) 7)))))))
-       vs ""))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Fetch + cache
@@ -243,44 +136,15 @@ bytes — `disk' reads the `ephemeral-storage' resource).  BASIS is
      (req (cons (funcall parse req) 'request))
      (t (cons nil nil)))))
 
-(defun k8s-metrics--line (label used denom basis humanizer &optional trend)
-  "Format one indented gauge LABEL line.
-USED and DENOM are numbers (DENOM may be nil); BASIS is a symbol;
-HUMANIZER formats a raw number for display.  TREND, when given a
-list of past values, appends a small trend sparkline."
-  (let* ((frac (and used denom (> denom 0) (/ (float used) denom)))
-         (gauge (if frac
-                    (k8s-metrics-gauge frac)
-                  ;; No denominator — pad so the text column still lines up.
-                  (make-string (+ 2 k8s-metrics-gauge-width) ?\s)))
-         (rhs (if frac
-                  (format "%s / %s  %d%% %s"
-                          (funcall humanizer used)
-                          (funcall humanizer denom)
-                          (round (* 100 frac))
-                          basis)
-                (format "%s / —  (no limit/request)"
-                        (funcall humanizer used)))))
-    (concat
-     (format "        %-4s %s  %s"
-             label gauge
-             (propertize rhs 'font-lock-face 'k8s-dim))
-     (if (and trend (cdr trend))        ; ≥2 points before it reads as a trend
-         (concat "  " (propertize (k8s-metrics--sparkline trend 10)
-                                  'font-lock-face 'k8s-gauge-empty))
-       "")
-     "\n")))
-
 (defun k8s-metrics-cm-sample (history key cpu mem)
   "Append CPU/MEM samples for KEY to HISTORY (a hash the caller owns).
 KEY is usually \"NS/POD/CONTAINER\".  Returns the updated
 \(:cpu-hist :mem-hist) plist."
   (let* ((e (gethash key history))
-         (ch (last (append (plist-get e :cpu-hist) (list (or cpu 0)))
-                   k8s-metrics-history-length))
-         (mh (last (append (plist-get e :mem-hist) (list (or mem 0)))
-                   k8s-metrics-history-length))
-         (new (list :cpu-hist ch :mem-hist mh)))
+         (new (list :cpu-hist (eltainer-ring-add (plist-get e :cpu-hist)
+                                                 (or cpu 0))
+                    :mem-hist (eltainer-ring-add (plist-get e :mem-hist)
+                                                 (or mem 0)))))
     (puthash key new history)
     new))
 
@@ -296,18 +160,18 @@ when there is nothing to draw."
     (when usage
       (let ((cpu-d (k8s-metrics--denominator spec-c 'cpu))
             (mem-d (k8s-metrics--denominator spec-c 'memory)))
-        (push (k8s-metrics--line "cpu" (car usage) (car cpu-d) (cdr cpu-d)
+        (push (eltainer-gauge-line "cpu" (car usage) (car cpu-d) (cdr cpu-d)
                                  #'k8s-metrics--human-cpu
                                  (plist-get cm-hist :cpu-hist))
               lines)
-        (push (k8s-metrics--line "mem" (cdr usage) (car mem-d) (cdr mem-d)
-                                 #'k8s-metrics--human-bytes
+        (push (eltainer-gauge-line "mem" (cdr usage) (car mem-d) (cdr mem-d)
+                                 #'eltainer-human-bytes
                                  (plist-get cm-hist :mem-hist))
               lines)))
     (when disk-used
       (let ((disk-d (k8s-metrics--denominator spec-c 'disk)))
-        (push (k8s-metrics--line "disk" disk-used (car disk-d) (cdr disk-d)
-                                 #'k8s-metrics--human-bytes)
+        (push (eltainer-gauge-line "disk" disk-used (car disk-d) (cdr disk-d)
+                                 #'eltainer-human-bytes)
               lines)))
     (when lines
       (apply #'concat (nreverse lines)))))
@@ -373,10 +237,8 @@ keys :rx :tx :time :rx-rate :tx-rate :rx-hist :tx-hist."
          (tx-hist (plist-get e :tx-hist)))
     ;; Skip the very first sample — no delta to form a rate from yet.
     (when dt
-      (setq rx-hist (last (append rx-hist (list rx-rate))
-                          k8s-metrics-history-length)
-            tx-hist (last (append tx-hist (list tx-rate))
-                          k8s-metrics-history-length)))
+      (setq rx-hist (eltainer-ring-add rx-hist rx-rate)
+            tx-hist (eltainer-ring-add tx-hist tx-rate)))
     (let ((entry (list :rx rx :tx tx :time now
                        :rx-rate rx-rate :tx-rate tx-rate
                        :rx-hist rx-hist :tx-hist tx-hist)))
@@ -396,19 +258,19 @@ when NET-ENTRY itself is nil."
           ;; Counters captured, no delta yet — show a placeholder.
           (concat
            (propertize (format "%snet   " indent) 'font-lock-face 'k8s-dim)
-           (propertize "(sampling…)\n" 'font-lock-face 'k8s-gauge-empty))
-        (let ((rx (k8s-metrics--sparkline (plist-get net-entry :rx-hist) 12))
-              (tx (k8s-metrics--sparkline (plist-get net-entry :tx-hist) 12))
-              (rxr (k8s-metrics--human-bytes
+           (propertize "(sampling…)\n" 'font-lock-face 'eltainer-gauge-empty))
+        (let ((rx (eltainer-sparkline (plist-get net-entry :rx-hist) 12))
+              (tx (eltainer-sparkline (plist-get net-entry :tx-hist) 12))
+              (rxr (eltainer-human-bytes
                     (round (or (plist-get net-entry :rx-rate) 0))))
-              (txr (k8s-metrics--human-bytes
+              (txr (eltainer-human-bytes
                     (round (or (plist-get net-entry :tx-rate) 0)))))
           (concat
            (propertize (format "%snet   rx " indent) 'font-lock-face 'k8s-dim)
-           (propertize rx 'font-lock-face 'k8s-gauge-low)
+           (propertize rx 'font-lock-face 'eltainer-gauge-low)
            (propertize (format " %9s/s    tx " (concat rxr))
                        'font-lock-face 'k8s-dim)
-           (propertize tx 'font-lock-face 'k8s-gauge-mid)
+           (propertize tx 'font-lock-face 'eltainer-gauge-mid)
            (propertize (format " %9s/s\n" (concat txr))
                        'font-lock-face 'k8s-dim)))))))
 
@@ -631,17 +493,17 @@ usage fields are nil when the kubelet Summary API is unavailable."
                                           (plist-get n :mem-used))))
           (insert (propertize (format "Node  %s\n" name)
                               'font-lock-face 'k8s-resource-name))
-          (insert (k8s-metrics--line "cpu" (plist-get n :cpu-used)
+          (insert (eltainer-gauge-line "cpu" (plist-get n :cpu-used)
                                      (plist-get n :cpu-total) 'alloc
                                      #'k8s-metrics--human-cpu
                                      (plist-get cm :cpu-hist)))
-          (insert (k8s-metrics--line "mem" (plist-get n :mem-used)
+          (insert (eltainer-gauge-line "mem" (plist-get n :mem-used)
                                      (plist-get n :mem-total) 'alloc
-                                     #'k8s-metrics--human-bytes
+                                     #'eltainer-human-bytes
                                      (plist-get cm :mem-hist)))
-          (insert (k8s-metrics--line "fs" (plist-get n :fs-used)
+          (insert (eltainer-gauge-line "fs" (plist-get n :fs-used)
                                      (plist-get n :fs-total) 'capacity
-                                     #'k8s-metrics--human-bytes))
+                                     #'eltainer-human-bytes))
           (insert "\n"))))
     (goto-char (min pt (point-max)))))
 

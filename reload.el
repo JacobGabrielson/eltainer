@@ -53,7 +53,8 @@ major mode in any live `docker-*-mode' / `k8s-*-mode' buffer."
                             load-path))
          (errors nil))
     ;; Top-level shared modules first.
-    (dolist (mod '("eltainer-ui" "eltainer-terminal" "eltainer-shell-helper"))
+    (dolist (mod '("eltainer-ui" "eltainer-gauge" "eltainer-terminal"
+                   "eltainer-shell-helper"))
       (let ((src (expand-file-name (concat mod ".el") eltainer--source-dir)))
         (when (file-exists-p src)
           (unless (byte-compile-file src) (push mod errors))
