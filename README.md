@@ -81,7 +81,7 @@ dependency (see [Requirements](#requirements)).
 
 | Key | Action |
 |-----|--------|
-| `?` | Dispatch menu (resource types + cluster switch) |
+| `?` | Context-aware dispatch — actions for the resource under point, plus `v` for the view switcher |
 | `g` | Refresh |
 | `N` | Switch namespace |
 | `w` | Toggle live watch (auto-update via the K8s watch API) |
@@ -90,8 +90,14 @@ dependency (see [Requirements](#requirements)).
 | `l` | Tail pod logs (streamed) |
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Read-only filesystem browser for the pod (pods view only) |
+| `M` | Per-pod metrics buffer (pods view only) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
+
+`?` is **context-aware** — the first group of the menu reflects
+whatever the cursor is on (a pod, a container, or another resource),
+so it only ever offers actions that apply there.  `l` / `e` / `f` /
+`M` on a container row target that container directly.
 
 `TAB` on a pod expands it to show its containers, each as its own
 section — point on a container row makes `l` / `e` / `f` target that
@@ -142,9 +148,12 @@ k8s/
   k8s-config.el          kubeconfig YAML parser (subset)
   k8s-api.el             REST client (thin wrapper over docker-http)
   k8s-watch.el           Watch streams on docker-http-stream
-  k8s-pods.el            Pods view: phases, restarts, streamed logs
+  k8s-metrics.el         Usage gauges / sparklines: metrics.k8s.io +
+                         kubelet Summary API; per-pod + node views
+  k8s-pods.el            Pods view: phases, restarts, streamed logs,
+                         container subsections, inline metrics
   k8s-fs.el / k8s-fs-ui.el  Pod-fs browser
-  k8s-exec.el            One-shot pod exec
+  k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```
 
