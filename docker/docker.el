@@ -398,15 +398,26 @@ debounced re-render."
                       (setq docker--host-mem
                             (and info (cdr (assq 'MemTotal info))))))
                   (dolist (id ids)
-                    (docker-metrics-fetch-async
-                     cfg id
-                     (lambda (stats)
-                       (when (and stats (buffer-live-p buf))
-                         (with-current-buffer buf
-                           (docker-metrics-sample docker--metrics id stats
-                                                  docker--host-mem
-                                                  (float-time))
-                           (docker--metrics-schedule-render buf)))))))))
+                    ;; Fresh `cid' per iteration — a `dolist' var is one
+                    ;; mutated binding, so a closure over `id' would see
+                    ;; only the final value.
+                    (let ((cid id))
+                      (docker-metrics-fetch-async
+                       cfg cid
+                       (lambda (stats)
+                         (when (and stats (buffer-live-p buf))
+                           (with-current-buffer buf
+                             ;; The cache can be wiped between firing the
+                             ;; request and this callback (a major-mode
+                             ;; re-run calls `kill-all-local-variables');
+                             ;; re-create it rather than crash.
+                             (unless docker--metrics
+                               (setq docker--metrics
+                                     (make-hash-table :test 'equal)))
+                             (docker-metrics-sample docker--metrics cid stats
+                                                    docker--host-mem
+                                                    (float-time))
+                             (docker--metrics-schedule-render buf))))))))))
           (error
            (message "docker metrics: %s" (error-message-string err))))))))
 
@@ -428,7 +439,11 @@ debounced re-render."
   (interactive)
   (let ((buf (get-buffer-create "*docker:containers*")))
     (with-current-buffer buf
-      (docker-containers-mode)
+      ;; Only enter the mode once — re-running it calls
+      ;; `kill-all-local-variables', which would orphan the running
+      ;; metrics timer and wipe its cache mid-flight.
+      (unless (derived-mode-p 'docker-containers-mode)
+        (docker-containers-mode))
       (let ((cfg (docker--ensure-config)))
         (docker--containers-refresh)
         (docker--subscribe-events

@@ -300,6 +300,10 @@ Shows `(sampling…)' until the second poll gives the first rate."
 
 (defun docker-metrics--buffer-render (stats)
   "Render STATS (a stats alist, or nil) into the current metrics buffer."
+  ;; The history hash can be wiped between firing the request and this
+  ;; callback (a major-mode re-run calls `kill-all-local-variables').
+  (unless docker-metrics--history
+    (setq docker-metrics--history (make-hash-table :test 'equal)))
   (let ((inhibit-read-only t)
         (pt (point)))
     (erase-buffer)
@@ -353,7 +357,10 @@ Shows `(sampling…)' until the second poll gives the first rate."
   "Open and display the metrics buffer for container NAME (ID) via CFG."
   (let ((buf (get-buffer-create (format "*docker:metrics:%s*" name))))
     (with-current-buffer buf
-      (docker-metrics-mode)
+      ;; Enter the mode only once — re-running it would orphan the
+      ;; refresh timer and wipe the history hash mid-flight.
+      (unless (derived-mode-p 'docker-metrics-mode)
+        (docker-metrics-mode))
       (setq docker-metrics--cfg cfg
             docker-metrics--id id
             docker-metrics--name name)
