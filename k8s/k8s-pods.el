@@ -12,6 +12,19 @@
 (require 'k8s)
 (require 'k8s-api)
 (require 'k8s-fs-ui)
+(require 'k8s-metrics)
+
+;; Declared up here so `k8s--insert-pod-details' (which reads the cache
+;; to draw gauges) compiles without a free-variable warning; the
+;; polling machinery that maintains them lives further down.
+(defvar-local k8s--metrics-cache nil
+  "Hash \"NS/POD\" -> ((CNAME . (CPU-MC . MEM-BYTES))...) for this buffer.
+Populated by the metrics timer; read while rendering pod details to
+draw per-container gauges.  nil means no metrics yet, or that
+metrics-server is unavailable.")
+
+(defvar-local k8s--metrics-timer nil
+  "Repeating timer polling metrics for this pods buffer.")
 
 ;;; ---------------------------------------------------------------------------
 ;;; Pod-specific helpers
@@ -97,19 +110,29 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
     ;; resting on one lets `l' / `e' / `f' target it directly.
     (when statuses
       (insert (propertize "    Containers:\n" 'font-lock-face 'k8s-dim))
-      (seq-doseq (cs statuses)
-        (let ((cname (cdr (assq 'name cs)))
-              (image (cdr (assq 'image cs)))
-              (ready (cdr (assq 'ready cs)))
-              (rc (or (cdr (assq 'restartCount cs)) 0)))
-          (magit-insert-section (container cname)
-            (insert (propertize
-                     (format "      %-20s %-40s ready=%-5s restarts=%d\n"
-                             cname
-                             (or image "?")
-                             (if (eq ready t) "yes" "no")
-                             rc)
-                     'font-lock-face 'k8s-dim))))))
+      (let ((podkey (format "%s/%s"
+                            (k8s--resource-namespace pod)
+                            (k8s--resource-name pod))))
+        (seq-doseq (cs statuses)
+          (let* ((cname (cdr (assq 'name cs)))
+                 (image (cdr (assq 'image cs)))
+                 (ready (cdr (assq 'ready cs)))
+                 (rc (or (cdr (assq 'restartCount cs)) 0))
+                 (usage (and k8s--metrics-cache
+                             (cdr (assoc cname
+                                         (gethash podkey
+                                                  k8s--metrics-cache))))))
+            (magit-insert-section (container cname)
+              (insert (propertize
+                       (format "      %-20s %-40s ready=%-5s restarts=%d\n"
+                               cname
+                               (or image "?")
+                               (if (eq ready t) "yes" "no")
+                               rc)
+                       'font-lock-face 'k8s-dim))
+              (when-let ((lines (k8s-metrics-container-lines
+                                 pod cname usage)))
+                (insert lines)))))))
     (insert "\n")))
 
 ;;; ---------------------------------------------------------------------------
@@ -144,6 +167,50 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
     (let ((magit-section-cache-visibility nil))
       (magit-section-show magit-root-section))
     (k8s--restore-point-context ctx)))
+
+;;; ---------------------------------------------------------------------------
+;;; Metrics polling
+;;
+;; Metrics are fetched on their own timer, *not* on the watch/event
+;; refresh hot path (metrics-server only scrapes every ~15s anyway).
+;; `k8s--insert-pod-details' just reads `k8s--metrics-cache' (declared
+;; near the top of the file).
+
+(defun k8s--metrics-stop ()
+  "Stop metrics polling for the current pods buffer."
+  (when (timerp k8s--metrics-timer)
+    (cancel-timer k8s--metrics-timer))
+  (setq k8s--metrics-timer nil))
+
+(defun k8s--metrics-tick (buf)
+  "Poll metrics for BUF and re-render.  Stops polling if unavailable."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (when (derived-mode-p 'k8s-pods-mode)
+        (condition-case err
+            (let ((m (k8s-metrics-collect (k8s--ensure-connection)
+                                          k8s--namespace)))
+              (if m
+                  (progn (setq k8s--metrics-cache m)
+                         (revert-buffer nil t))
+                ;; metrics.k8s.io absent — stop polling, say so once.
+                (k8s--metrics-stop)
+                (message
+                 "k8s metrics: metrics-server unavailable; gauges disabled")))
+          (error
+           (message "k8s metrics: %s" (error-message-string err))))))))
+
+(defun k8s--metrics-start ()
+  "Begin metrics polling for the current pods buffer."
+  (k8s--metrics-stop)
+  (let ((buf (current-buffer)))
+    ;; Immediate first poll so gauges appear without a full interval's wait.
+    (run-at-time 0.2 nil #'k8s--metrics-tick buf)
+    (setq k8s--metrics-timer
+          (run-at-time k8s-metrics-refresh-interval
+                       k8s-metrics-refresh-interval
+                       #'k8s--metrics-tick buf)))
+  (add-hook 'kill-buffer-hook #'k8s--metrics-stop nil t))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Pod log viewer
@@ -494,7 +561,8 @@ or `kubectl debug --image=busybox -it %s --target=%s'"
       (k8s--ensure-connection)
       (setq k8s--api-path-fn
             (lambda (ns) (k8s--list-path 'pods ns)))
-      (k8s--pods-refresh))
+      (k8s--pods-refresh)
+      (k8s--metrics-start))
     (pop-to-buffer buf)))
 
 (provide 'k8s-pods)

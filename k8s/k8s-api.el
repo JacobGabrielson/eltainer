@@ -307,6 +307,31 @@ CONTAINER specifies which container (required for multi-container pods)."
   "GET a single resource at PATH via CONN."
   (k8s-get conn path))
 
+;;; ---------------------------------------------------------------------------
+;;; Metrics (metrics.k8s.io — served by metrics-server)
+
+(defun k8s-metrics-list-pods (conn &optional namespace)
+  "List pod metrics via CONN, optionally limited to NAMESPACE.
+Returns a vector of PodMetrics, or nil when the `metrics.k8s.io'
+API group is unavailable — i.e. metrics-server isn't installed.
+The nil return lets callers degrade gracefully rather than error."
+  (let ((path (if namespace
+                  (format "/apis/metrics.k8s.io/v1beta1/namespaces/%s/pods"
+                          namespace)
+                "/apis/metrics.k8s.io/v1beta1/pods")))
+    (condition-case nil
+        (cdr (assq 'items (k8s-get conn path)))
+      (error nil))))
+
+(defun k8s-metrics-list-nodes (conn)
+  "List node metrics via CONN.
+Returns a vector of NodeMetrics, or nil when `metrics.k8s.io' is
+unavailable."
+  (condition-case nil
+      (cdr (assq 'items
+                 (k8s-get conn "/apis/metrics.k8s.io/v1beta1/nodes")))
+    (error nil)))
+
 (defun k8s--extract-resource-version (response)
   "Return metadata.resourceVersion from a list RESPONSE."
   (cdr (assq 'resourceVersion (cdr (assq 'metadata response)))))

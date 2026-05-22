@@ -93,6 +93,12 @@ dependency (see [Requirements](#requirements)).
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
 
+`TAB` on a pod expands it to show its containers, each as its own
+section — point on a container row makes `l` / `e` / `f` target that
+container directly (no picker).  Expanded containers also show live
+CPU and memory gauges when metrics-server is available in the
+cluster.
+
 ### Switching contexts
 
 `b` (on the dashboard *or* any k8s view) enumerates every context
