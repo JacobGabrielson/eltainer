@@ -50,6 +50,7 @@ transport, `docker-credential-*` helpers, and Kubernetes
 | Kubernetes | `j` / `J` | Jobs / CronJobs |
 | Kubernetes | `i` | Ingresses |
 | Kubernetes | `m` / `x` | ConfigMaps / Secrets |
+| Kubernetes | `A` | Sandboxes (agent-sandbox SIG — `agents.x-k8s.io`) |
 | — | `b` | Switch Kubernetes context (across all discovered kubeconfigs) |
 | — | `g` | Refresh dashboard |
 

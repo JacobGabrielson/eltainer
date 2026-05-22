@@ -43,7 +43,8 @@
       ("J" "CronJobs"      k8s-cronjobs)
       ("i" "Ingresses"     k8s-ingresses)
       ("m" "ConfigMaps"    k8s-configmaps)
-      ("x" "Secrets"       k8s-secrets))))
+      ("x" "Secrets"       k8s-secrets)
+      ("A" "Sandboxes"     k8s-sandboxes))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).")
 
 (defvar eltainer-mode-map (make-sparse-keymap)

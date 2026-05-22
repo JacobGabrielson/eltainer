@@ -172,7 +172,9 @@ the helper exits non-zero, or the JSON is malformed."
     (secrets      "/api/v1/secrets"
                   "/api/v1/namespaces/%s/secrets")
     (ingresses    "/apis/networking.k8s.io/v1/ingresses"
-                  "/apis/networking.k8s.io/v1/namespaces/%s/ingresses"))
+                  "/apis/networking.k8s.io/v1/namespaces/%s/ingresses")
+    (sandboxes    "/apis/agents.x-k8s.io/v1beta1/sandboxes"
+                  "/apis/agents.x-k8s.io/v1beta1/namespaces/%s/sandboxes"))
   "Alist mapping resource types (plural) to (ALL-PATH NAMESPACED-PATH-TEMPLATE).
 Keys are plural to match `k8s--define-view's macro name convention.")
 
@@ -193,7 +195,8 @@ Keys are plural to match `k8s--define-view's macro name convention.")
     (cronjob     . "/apis/batch/v1/namespaces/%s/cronjobs/%s")
     (configmap   . "/api/v1/namespaces/%s/configmaps/%s")
     (secret      . "/api/v1/namespaces/%s/secrets/%s")
-    (ingress     . "/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s"))
+    (ingress     . "/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s")
+    (sandbox     . "/apis/agents.x-k8s.io/v1beta1/namespaces/%s/sandboxes/%s"))
   "Alist mapping section types to API path templates (namespace, name).")
 
 (defun k8s-delete-resource (conn type namespace name)
@@ -302,6 +305,18 @@ CONTAINER specifies which container (required for multi-container pods)."
                           namespace)
                 "/apis/networking.k8s.io/v1/ingresses")))
     (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-sandboxes (conn &optional namespace)
+  "List agent-sandbox Sandboxes via CONN, optionally in NAMESPACE.
+Returns nil (rather than erroring) when the `agents.x-k8s.io' CRD
+isn't installed in the cluster — callers degrade gracefully."
+  (let ((path (if namespace
+                  (format "/apis/agents.x-k8s.io/v1beta1/namespaces/%s/sandboxes"
+                          namespace)
+                "/apis/agents.x-k8s.io/v1beta1/sandboxes")))
+    (condition-case nil
+        (cdr (assq 'items (k8s-get conn path)))
+      (error nil))))
 
 (defun k8s-get-resource (conn path)
   "GET a single resource at PATH via CONN."

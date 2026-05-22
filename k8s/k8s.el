@@ -193,6 +193,7 @@ overlay, since a timer refresh fires no `post-command-hook'."
     ("Complete"  'k8s-status-running)
     ("Bound"     'k8s-status-running)
     ("Available" 'k8s-status-running)
+    ("Ready"     'k8s-status-running)
     ("Pending"      'k8s-status-pending)
     ("Terminating"  'k8s-status-failed)
     ("Failed"       'k8s-status-failed)
@@ -761,7 +762,9 @@ That is: a section whose value is a resource alist (carries
     ("s" "Services"     k8s-services)
     ("i" "Ingresses"    k8s-ingresses)
     ("m" "ConfigMaps"   k8s-configmaps)
-    ("x" "Secrets"      k8s-secrets)]])
+    ("x" "Secrets"      k8s-secrets)]
+   ["Agents"
+    ("A" "Sandboxes"    k8s-sandboxes)]])
 
 (transient-define-prefix k8s-dispatch ()
   "Context-aware command menu for the Kubernetes views.
@@ -1171,6 +1174,74 @@ where the cursor is."
   #'k8s-list-secrets
   (format "  %-35s %-40s %-6s %s\n" "NAME" "TYPE" "DATA" "AGE")
   #'k8s--insert-secret-line)
+
+;;; ---------------------------------------------------------------------------
+;;; Sandboxes (agent-sandbox SIG — agents.x-k8s.io/v1beta1)
+
+(defun k8s--sandbox-ready (sandbox)
+  "Return SANDBOX's readiness as a short string for the READY column.
+Prefers the `Ready' condition; falls back to the latest condition's
+type, or \"—\" when the status carries no conditions (e.g. the
+agent-sandbox controller isn't running)."
+  (let* ((conds (append (cdr (assq 'conditions
+                                   (cdr (assq 'status sandbox))))
+                        nil))
+         (ready (seq-find (lambda (c) (equal (cdr (assq 'type c)) "Ready"))
+                          conds)))
+    (cond
+     (ready (if (equal (cdr (assq 'status ready)) "True")
+                "Ready"
+              (or (cdr (assq 'reason ready)) "NotReady")))
+     (conds (or (cdr (assq 'type (car (last conds)))) "—"))
+     (t "—"))))
+
+(defun k8s--insert-sandbox-line (sandbox)
+  "Insert an agent-sandbox Sandbox summary line."
+  (let* ((name (k8s--resource-name sandbox))
+         (status (cdr (assq 'status sandbox)))
+         (ready (k8s--sandbox-ready sandbox))
+         (service (or (cdr (assq 'service status)) ""))
+         (ips (append (cdr (assq 'podIPs status)) nil))
+         (ip (or (car ips) ""))
+         (age (k8s--age-string (k8s--resource-creation-time sandbox))))
+    (magit-insert-section (sandbox sandbox t)
+      (magit-insert-heading
+        (format "  %-36s %-12s %-22s %-16s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize ready 'font-lock-face (k8s--phase-face ready))
+                (propertize service 'font-lock-face 'k8s-dim)
+                (propertize ip 'font-lock-face 'k8s-dim)
+                (propertize age 'font-lock-face 'k8s-dim)))
+      (let ((fqdn (cdr (assq 'serviceFQDN status)))
+            (replicas (cdr (assq 'replicas status))))
+        (when fqdn
+          (insert (propertize (format "    FQDN:      %s\n" fqdn)
+                              'font-lock-face 'k8s-dim)))
+        (when replicas
+          (insert (propertize (format "    Replicas:  %s\n" replicas)
+                              'font-lock-face 'k8s-dim)))
+        (when (cdr ips)
+          (insert (propertize (format "    Pod IPs:   %s\n"
+                                      (mapconcat #'identity ips ", "))
+                              'font-lock-face 'k8s-dim)))
+        (dolist (c (append (cdr (assq 'conditions status)) nil))
+          (insert (propertize
+                   (format "    %-13s %s%s\n"
+                           (concat (cdr (assq 'type c)) ":")
+                           (cdr (assq 'status c))
+                           (let ((r (cdr (assq 'reason c))))
+                             (if (and r (> (length r) 0))
+                                 (format "  (%s)" r) "")))
+                   'font-lock-face 'k8s-dim)))
+        (k8s--insert-labels (k8s--resource-labels sandbox) "    ")
+        (insert "\n")))))
+
+(k8s--define-view sandboxes
+  "Major mode for viewing agent-sandbox Sandboxes."
+  #'k8s-list-sandboxes
+  (format "  %-36s %-12s %-22s %-16s %s\n"
+          "NAME" "READY" "SERVICE" "POD IP" "AGE")
+  #'k8s--insert-sandbox-line)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Finalize resource type list (reverse so display order matches definition)
