@@ -103,15 +103,9 @@ Returns parsed JSON (or nil for empty 204 bodies) or signals on error."
 ;;; ---------------------------------------------------------------------------
 ;;; Metrics helpers
 
-(defun docker-container-stats (cfg id)
-  "Return a one-shot resource-stats snapshot for container ID.
-Uses `/containers/{id}/stats?stream=false' — a single sample with
-cumulative CPU / memory / blkio / network counters.  Returns nil on
-failure (container gone, daemon error) so callers degrade gracefully."
-  (condition-case nil
-      (docker-engine-get cfg (format "/containers/%s/stats" id)
-                         :query '(("stream" . "false")))
-    (error nil)))
+;; Note: container `/stats' is fetched asynchronously — see
+;; `docker-metrics-fetch-async' — since each call costs the daemon
+;; ~1.5s.  Only the cheap `/info' lookup stays synchronous here.
 
 (defun docker-host-info (cfg)
   "Return the daemon `/info' alist (carries `MemTotal', `NCPU'), or nil."

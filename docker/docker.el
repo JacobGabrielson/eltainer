@@ -328,17 +328,27 @@ Filled by the stats poll timer; read while rendering container detail.")
 ;;; --- Container metrics polling --------------------------------------------
 ;;
 ;; `/containers/{id}/stats?stream=false' takes the daemon ~1.5s per
-;; call (it samples a window) — far too slow to poll every container.
-;; So polling is *lazy*: only containers whose section is expanded get
-;; stat'd.  A collapsed container's gauges aren't visible anyway, and
-;; with nothing expanded a tick costs nothing.  (A future improvement
-;; is the streaming `/stats' endpoint — non-blocking ~1Hz pushes.)
+;; call (it samples a window).  Two things keep that off Emacs's back:
+;;
+;;  * Lazy — only containers whose section is *expanded* get stat'd; a
+;;    collapsed container's gauges aren't visible anyway, and with
+;;    nothing expanded a tick costs nothing.
+;;  * Async — each fetch runs over an asynchronous network process
+;;    (`docker-metrics-fetch-async'); the tick fires the requests and
+;;    returns immediately, and a debounced re-render runs as the
+;;    responses trickle in.  Emacs never blocks on the daemon.
+
+(defvar-local docker--metrics-render-timer nil
+  "Debounce timer coalescing re-renders as async stats responses land.")
 
 (defun docker--metrics-stop ()
-  "Stop the container-stats poll for the current buffer."
+  "Stop the container-stats poll + pending re-render for the current buffer."
   (when (timerp docker--metrics-timer)
     (cancel-timer docker--metrics-timer))
-  (setq docker--metrics-timer nil))
+  (when (timerp docker--metrics-render-timer)
+    (cancel-timer docker--metrics-render-timer))
+  (setq docker--metrics-timer nil
+        docker--metrics-render-timer nil))
 
 (defun docker--expanded-container-ids ()
   "Return the ids of `container' sections currently expanded in this buffer."
@@ -355,8 +365,24 @@ Filled by the stats poll timer; read while rendering container detail.")
         (forward-line 1)))
     (delete-dups ids)))
 
+(defun docker--metrics-schedule-render (buf)
+  "Schedule a debounced re-render of BUF as async stats responses arrive."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (when (timerp docker--metrics-render-timer)
+        (cancel-timer docker--metrics-render-timer))
+      (setq docker--metrics-render-timer
+            (run-at-time 0.5 nil
+                         (lambda ()
+                           (when (buffer-live-p buf)
+                             (with-current-buffer buf
+                               (setq docker--metrics-render-timer nil)
+                               (revert-buffer nil t)))))))))
+
 (defun docker--metrics-tick (buf)
-  "Poll `/stats' for the expanded containers in BUF, then re-render."
+  "Fire async `/stats' fetches for the expanded containers in BUF.
+Returns immediately; each response updates the cache and schedules a
+debounced re-render."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (derived-mode-p 'docker-containers-mode)
@@ -371,13 +397,16 @@ Filled by the stats poll timer; read while rendering container detail.")
                     (let ((info (docker-host-info cfg)))
                       (setq docker--host-mem
                             (and info (cdr (assq 'MemTotal info))))))
-                  (let ((now (float-time)))
-                    (dolist (id ids)
-                      (let ((stats (docker-container-stats cfg id)))
-                        (when stats
-                          (docker-metrics-sample docker--metrics id
-                                                 stats docker--host-mem now)))))
-                  (revert-buffer nil t))))
+                  (dolist (id ids)
+                    (docker-metrics-fetch-async
+                     cfg id
+                     (lambda (stats)
+                       (when (and stats (buffer-live-p buf))
+                         (with-current-buffer buf
+                           (docker-metrics-sample docker--metrics id stats
+                                                  docker--host-mem
+                                                  (float-time))
+                           (docker--metrics-schedule-render buf)))))))))
           (error
            (message "docker metrics: %s" (error-message-string err))))))))
 

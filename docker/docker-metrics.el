@@ -21,6 +21,7 @@
 (require 'seq)
 (require 'eltainer-gauge)
 (require 'docker-api)
+(require 'docker-http)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Customization
@@ -39,6 +40,36 @@
 `/stats' is one call per container; this caps the cost on big hosts."
   :type 'integer
   :group 'docker-metrics)
+
+;;; ---------------------------------------------------------------------------
+;;; Async fetch
+;;
+;; `/stats?stream=false' costs the daemon ~1.5s (it samples a window),
+;; so it is fetched over an asynchronous network process — the request
+;; runs in the background and CALLBACK fires when the response lands,
+;; never blocking Emacs.
+
+(defun docker-metrics-fetch-async (cfg id callback)
+  "Asynchronously fetch a one-shot `/stats' sample for container ID.
+CALLBACK is called with the decoded stats alist, or nil on failure.
+Returns immediately — the request runs over `docker-http-stream'."
+  (let ((acc "") (ok t))
+    (condition-case nil
+        (docker-http-stream
+         cfg "GET" (format "/containers/%s/stats" id)
+         :query '(("stream" . "false"))
+         :on-headers (lambda (status &rest _)
+                       (setq ok (and status (= status 200))))
+         :on-chunk (lambda (bytes) (when ok (setq acc (concat acc bytes))))
+         :on-close
+         (lambda ()
+           (funcall callback
+                    (and ok (> (length acc) 0)
+                         (ignore-errors
+                           (json-parse-string
+                            acc :object-type 'alist :array-type 'array
+                            :null-object nil :false-object :false))))))
+      (error (funcall callback nil)))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Sampling
@@ -267,36 +298,44 @@ Shows `(sampling…)' until the second poll gives the first rate."
   (setq-local truncate-lines t)
   (add-hook 'kill-buffer-hook #'docker-metrics--buffer-stop-timer nil t))
 
-(defun docker-metrics-buffer-refresh ()
-  "Re-fetch and re-render the current container metrics buffer."
-  (interactive)
-  (unless (derived-mode-p 'docker-metrics-mode)
-    (user-error "Not a docker metrics buffer"))
-  (let* ((cfg docker-metrics--cfg)
-         (id docker-metrics--id)
-         (name docker-metrics--name)
-         (stats (docker-container-stats cfg id))
-         (inhibit-read-only t)
-         (pt (point)))
-    (unless docker-metrics--history
-      (setq docker-metrics--history (make-hash-table :test 'equal)))
-    (unless docker-metrics--host-mem
-      (let ((info (docker-host-info cfg)))
-        (setq docker-metrics--host-mem
-              (and info (cdr (assq 'MemTotal info))))))
+(defun docker-metrics--buffer-render (stats)
+  "Render STATS (a stats alist, or nil) into the current metrics buffer."
+  (let ((inhibit-read-only t)
+        (pt (point)))
     (erase-buffer)
-    (insert (propertize (format "Container  %s" name) 'font-lock-face 'bold)
+    (insert (propertize (format "Container  %s" docker-metrics--name)
+                        'font-lock-face 'bold)
             (propertize "   g refreshes, q quits\n\n"
                         'font-lock-face 'eltainer-gauge-empty))
     (if (null stats)
         (insert (propertize "  not running — no stats to show.\n"
                             'font-lock-face 'eltainer-gauge-empty))
-      (let ((m (docker-metrics-sample docker-metrics--history id stats
+      (let ((m (docker-metrics-sample docker-metrics--history
+                                      docker-metrics--id stats
                                       docker-metrics--host-mem (float-time))))
         (insert (or (docker-metrics-container-lines m)
                     (propertize "  (sampling…)\n"
                                 'font-lock-face 'eltainer-gauge-empty)))))
     (goto-char (min pt (point-max)))))
+
+(defun docker-metrics-buffer-refresh ()
+  "Re-fetch (asynchronously) and re-render the current metrics buffer."
+  (interactive)
+  (unless (derived-mode-p 'docker-metrics-mode)
+    (user-error "Not a docker metrics buffer"))
+  (unless docker-metrics--history
+    (setq docker-metrics--history (make-hash-table :test 'equal)))
+  (unless docker-metrics--host-mem
+    (let ((info (docker-host-info docker-metrics--cfg)))
+      (setq docker-metrics--host-mem
+            (and info (cdr (assq 'MemTotal info))))))
+  (let ((buf (current-buffer)))
+    (docker-metrics-fetch-async
+     docker-metrics--cfg docker-metrics--id
+     (lambda (stats)
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (docker-metrics--buffer-render stats)))))))
 
 (defun docker-metrics--buffer-start-timer ()
   "(Re)start the metrics buffer's refresh timer."

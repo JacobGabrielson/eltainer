@@ -111,24 +111,30 @@ k8s gets every pod's metrics in a single call; Docker needs one
 **not** cheap: the daemon samples a window, so each call takes
 ~1.5 s.  Polling every container would freeze Emacs for seconds.
 
-What shipped — **lazy polling**:
+What shipped — **lazy + async polling**:
 
-- A tick stats only the containers whose section is currently
-  *expanded* (`docker--expanded-container-ids`).  A collapsed
-  container's gauges aren't visible anyway, so there's nothing to
-  pay for; with nothing expanded a tick costs nothing.
+- *Lazy* — a tick stats only the containers whose section is
+  currently *expanded* (`docker--expanded-container-ids`).  A
+  collapsed container's gauges aren't visible anyway, so there's
+  nothing to pay for; with nothing expanded a tick costs nothing.
+- *Async* — each `/stats` fetch runs over an asynchronous network
+  process (`docker-metrics-fetch-async', built on
+  `docker-http-stream').  The tick fires the requests and returns
+  immediately; the ~1.5 s the daemon spends sampling happens in the
+  background.  Emacs never blocks.
+- As responses land, each updates the buffer-local cache and
+  schedules a *debounced* re-render (`docker--metrics-schedule-render',
+  0.5 s) so a burst of responses coalesces into one refresh.
 - Timer cadence `docker-metrics-refresh-interval` (default 15s), off
   the `/events` hot path.  Capped by `docker-metrics-max-containers`.
-- Cache buffer-local keyed by container id; the render reads it, the
-  timer refills it — same shape as the k8s caches.
 - A freshly-expanded container shows its gauges within one interval
   (the next tick picks it up).
 
 Future: the **streaming** `/stats` endpoint (drop `?stream=false`)
-pushes a fresh sample ~1 Hz over a persistent connection, consumed
-in a process filter like `/events` — non-blocking, and CPU% comes
-free frame-to-frame.  The cost is N persistent connections; worth it
-once the lazy approach's per-expand latency becomes annoying.
+pushes a fresh sample ~1 Hz over a persistent connection — even
+lower latency, and CPU% comes free frame-to-frame — at the cost of
+N persistent connections.  The async one-shot above already removes
+the blocking, so streaming is a latency refinement, not a fix.
 
 ## 7. New / changed files
 
