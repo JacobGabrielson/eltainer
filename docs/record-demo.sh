@@ -46,6 +46,8 @@ fi
 
 # Make sure the two-container pod exists — the `e' scene shows the
 # container picker choosing between its `app' and `sidecar' containers.
+# Both containers carry resource limits so the metrics gauges have a
+# denominator to draw a real bar against.
 if ! kubectl get pod duo-box >/dev/null 2>&1; then
   kubectl apply -f - <<'YAML' >/dev/null
 apiVersion: v1
@@ -58,9 +60,15 @@ spec:
   - name: app
     image: alpine:3.20
     command: ["/bin/sh", "-c", "echo app-container; sleep infinity"]
+    resources:
+      requests: {cpu: 50m, memory: 32Mi}
+      limits:   {cpu: 100m, memory: 64Mi}
   - name: sidecar
     image: busybox:1.37
     command: ["/bin/sh", "-c", "echo sidecar-container; sleep infinity"]
+    resources:
+      requests: {cpu: 25m, memory: 16Mi}
+      limits:   {cpu: 50m, memory: 32Mi}
 YAML
   kubectl wait --for=condition=Ready pod/duo-box --timeout=60s >/dev/null
 fi

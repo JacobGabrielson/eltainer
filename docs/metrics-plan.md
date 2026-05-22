@@ -49,19 +49,32 @@ alist), so 1 and 2 cost nothing extra.
 Render notes alongside the gauge so the basis is never ambiguous:
 `62%  124m / 200m (limit)` vs `… (request)` vs `… (node)`.
 
-### Disk — deferred to phase 2
+### Disk + network — deferred to phase 2
 
-`metrics.k8s.io` does **not** expose filesystem usage.  Per-container
-ephemeral-storage usage lives in the kubelet Summary API:
+`metrics.k8s.io` exposes **only** CPU and memory.  Disk usage and
+network traffic both come from a different, heavier source — the
+kubelet Summary API, reached through the API server's node proxy:
 
 `GET /api/v1/nodes/{node}/proxy/stats/summary`
-→ `.pods[].containers[].rootfs.usedBytes`, `.ephemeral-storage`.
 
-This works but is heavier: per-node, needs `nodes/proxy` RBAC, and the
-shape is less stable than `metrics.k8s.io`.  **Phase 1 ships CPU +
-memory only.**  Phase 2 adds disk; until then the detail line can show
-the static `resources.{requests,limits}."ephemeral-storage"` from the
-spec (no gauge, just the numbers) if they're set.
+- **Disk** — `.pods[].containers[].rootfs.usedBytes` and
+  `.pods[].ephemeral-storage.usedBytes`.
+- **Network** — `.pods[].network.{rxBytes,txBytes}` (cumulative
+  counters, **pod-level** — containers in a pod share one network
+  namespace, so there is no per-container split).
+
+Caveats that make this phase 2, not phase 1:
+
+- Per-node, not cluster-aggregated — eltainer must map each pod to
+  its node and proxy to that node's kubelet.
+- Needs `nodes/proxy` RBAC; not every kubeconfig has it.
+- The Summary API shape is less stable than `metrics.k8s.io`.
+- Network figures are **cumulative byte counters** — a *rate*
+  (bytes/sec) needs two samples and a time delta (see §3a).
+
+**Phase 1 ships CPU + memory only.**  Until phase 2, the pod detail
+can still show static `resources.{requests,limits}.ephemeral-storage`
+from the spec (numbers, no gauge) when set.
 
 ## 2. Parsing resource quantities
 
@@ -140,6 +153,60 @@ Node  eltainer-test-control-plane
   cpu  ▕████████████▏    ▏  1.9 / 4 cores   48%
   mem  ▕███████████████▎▏  6.1 / 7.8 GiB    78%
 ```
+
+## 3a. Network — rate + sparkline graph (phase 2)
+
+CPU and memory are point-in-time levels → a bar gauge fits.  Network
+traffic is a **flow** — bytes/sec — with no natural 0..1 ceiling, so a
+bar gauge is the wrong shape.  The minimalist Emacs answer is a
+**sparkline**: a row of block characters showing recent history.
+
+### Computing the rate
+
+`.pods[].network.{rxBytes,txBytes}` are cumulative counters.  Keep, per
+pod, the previous `(timestamp . rxBytes . txBytes)`.  On each poll:
+
+```
+rate = (bytes_now - bytes_prev) / (t_now - t_prev)
+```
+
+First sample for a pod yields no rate (nothing to diff yet).  Counter
+resets (pod restart → counter goes backwards) clamp to 0.
+
+### Sparkline rendering
+
+A sibling of the gauge helper, also pure text + faces:
+
+```elisp
+(defun k8s-metrics--sparkline (values &optional width)
+  "Render VALUES (newest last) as a block-character sparkline."
+  (let* ((bars  "▁▂▃▄▅▆▇█")
+         (vs    (last values (or width (length values))))
+         (peak  (apply #'max 1 vs)))
+    (mapconcat (lambda (v)
+                 (char-to-string
+                  (aref bars (min 7 (floor (* (/ (float v) peak) 7))))))
+               vs "")))
+```
+
+Keep a bounded ring buffer (≈ 30 samples) of rates per pod, render the
+last N as the sparkline.  Scaled to the window peak so the shape is
+always legible regardless of absolute throughput.
+
+### Mockup
+
+Network is pod-level, so its line sits on the pod, not a container:
+
+```
+  duo-box                          Running   2/2   0   12m   10.244.0.7
+    Node:   eltainer-test-control-plane
+    net   rx ▁▂▂▅█▆▃▂▁▁  4.2 KiB/s    tx ▁▁▂▃▂▂▁▁▁▁  1.1 KiB/s
+    Containers:
+      app  …
+```
+
+Same `k8s-metrics--sparkline` helper can later give CPU/memory a tiny
+trend strip next to their gauges, if wanted.
 
 ## 4. Where metrics surface
 
@@ -238,13 +305,15 @@ refresh.
 
 ## 8. Phasing
 
-1. **Phase 1** — `k8s-metrics.el`: parsers, gauge, fetch+cache;
-   inline CPU/mem gauges in the expanded pod section; graceful
-   degradation when metrics-server is absent.
+1. **Phase 1** ✅ *(shipped)* — `k8s-metrics.el`: parsers, gauge,
+   fetch+cache; inline CPU/mem gauges in the expanded pod section;
+   graceful degradation when metrics-server is absent.
 2. **Phase 1.5** — context-aware `k8s-dispatch`; `M` opens a
    dedicated per-pod metrics buffer.
-3. **Phase 2** — disk usage via the kubelet Summary API; node-level
-   metrics view.
+3. **Phase 2** — kubelet Summary API access (per-node proxy):
+   - disk: `rootfs` / `ephemeral-storage` gauges per container;
+   - network: per-pod rx/tx **rate** + sparkline graph (§3a).
+   Plus a node-level metrics view.
 
 ## 9. Open questions
 
@@ -253,6 +322,9 @@ refresh.
   confirm against `k8s-pods-mode-map`).
 - Inline gauges always on, or only when a pod section is expanded?
   (Lean: only when expanded — keeps the collapsed list compact.)
-- Show sparthan-history (tiny trend sparkline) later?  Out of scope
-  for now; the gauge helper could grow a `k8s-metrics--sparkline`
-  sibling if wanted.
+- Network sparkline history is buffer-local and lost on a context
+  switch / buffer kill — acceptable, or persist a short ring per
+  pod-uid?  (Lean: acceptable; it's a live trend, not a log.)
+- kubelet Summary API needs `nodes/proxy` RBAC — phase 2 must detect
+  the 403 and degrade (disk/network gauges simply absent), the same
+  way phase 1 degrades when metrics-server is missing.
