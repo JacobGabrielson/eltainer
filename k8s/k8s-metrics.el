@@ -41,6 +41,12 @@ buys nothing."
   :type 'integer
   :group 'k8s-metrics)
 
+(defcustom k8s-metrics-history-length 24
+  "How many recent network-rate samples to keep per pod.
+The network sparkline draws (up to) this many points."
+  :type 'integer
+  :group 'k8s-metrics)
+
 (defconst k8s-metrics--mid-threshold 0.70
   "Fraction at/above which a gauge turns from low to mid colour.")
 
@@ -162,6 +168,23 @@ Returns nil when S is nil or unparseable.  Handles binary suffixes
           (k8s-metrics--bar fraction k8s-metrics-gauge-width)
           (propertize "▕" 'font-lock-face 'k8s-gauge-empty)))
 
+(defun k8s-metrics--sparkline (values &optional width)
+  "Render VALUES (numbers, oldest first) as a block-character sparkline.
+WIDTH caps to the most-recent values.  Bars scale to the window
+peak, so the shape stays legible at any throughput."
+  (if (null values)
+      ""
+    (let* ((bars "▁▂▃▄▅▆▇█")
+           (vs (if (and width (> (length values) width))
+                   (last values width)
+                 values))
+           (peak (apply #'max 1.0 (mapcar #'float vs))))
+      (mapconcat
+       (lambda (v)
+         (char-to-string
+          (aref bars (min 7 (max 0 (floor (* (/ (float v) peak) 7)))))))
+       vs ""))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Fetch + cache
 
@@ -202,10 +225,14 @@ the `metrics.k8s.io' API is unavailable (no metrics-server)."
 
 (defun k8s-metrics--denominator (spec-container kind)
   "Return (VALUE . BASIS) for KIND of SPEC-CONTAINER.
-KIND is `cpu' (VALUE in millicores) or `memory' (VALUE in bytes).
-BASIS is `limit' or `request'; (nil . nil) when neither is set."
+KIND is `cpu' (VALUE in millicores), `memory' or `disk' (VALUE in
+bytes — `disk' reads the `ephemeral-storage' resource).  BASIS is
+`limit' or `request'; (nil . nil) when neither is set."
   (let* ((res (cdr (assq 'resources spec-container)))
-         (key (if (eq kind 'cpu) 'cpu 'memory))
+         (key (pcase kind
+                ('cpu 'cpu)
+                ('memory 'memory)
+                ('disk 'ephemeral-storage)))
          (parse (if (eq kind 'cpu)
                     #'k8s-metrics--parse-cpu
                   #'k8s-metrics--parse-memory))
@@ -237,19 +264,120 @@ HUMANIZER formats a raw number for display."
             label gauge
             (propertize rhs 'font-lock-face 'k8s-dim))))
 
-(defun k8s-metrics-container-lines (pod cname usage)
-  "Return the indented CPU/memory gauge lines for container CNAME of POD.
+(defun k8s-metrics-container-lines (pod cname usage &optional disk-used)
+  "Return the indented CPU/memory/disk gauge lines for CNAME of POD.
 USAGE is (CPU-MILLICORES . MEM-BYTES) from `k8s-metrics-collect', or
-nil — in which case this returns nil (no gauges to draw)."
-  (when usage
-    (let* ((spec-c (k8s-metrics--spec-container pod cname))
-           (cpu-d (k8s-metrics--denominator spec-c 'cpu))
-           (mem-d (k8s-metrics--denominator spec-c 'memory)))
+nil.  DISK-USED is the container's rootfs bytes from the kubelet
+Summary API, or nil.  Returns nil when there is nothing to draw."
+  (let ((spec-c (k8s-metrics--spec-container pod cname))
+        (lines nil))
+    (when usage
+      (let ((cpu-d (k8s-metrics--denominator spec-c 'cpu))
+            (mem-d (k8s-metrics--denominator spec-c 'memory)))
+        (push (k8s-metrics--line "cpu" (car usage) (car cpu-d) (cdr cpu-d)
+                                 #'k8s-metrics--human-cpu)
+              lines)
+        (push (k8s-metrics--line "mem" (cdr usage) (car mem-d) (cdr mem-d)
+                                 #'k8s-metrics--human-bytes)
+              lines)))
+    (when disk-used
+      (let ((disk-d (k8s-metrics--denominator spec-c 'disk)))
+        (push (k8s-metrics--line "disk" disk-used (car disk-d) (cdr disk-d)
+                                 #'k8s-metrics--human-bytes)
+              lines)))
+    (when lines
+      (apply #'concat (nreverse lines)))))
+
+;;; ---------------------------------------------------------------------------
+;;; Disk + network — kubelet Summary API (phase 2)
+
+(defun k8s-metrics-collect-summary (conn)
+  "Fetch the kubelet Summary API for every node reachable via CONN.
+Returns a hash \"NS/POD\" -> that pod's summary entry alist (it
+carries `network' byte counters and per-container `rootfs' disk
+usage), or nil when the Summary API is unavailable on every node
+\(no `nodes/proxy' RBAC, kubelet unreachable, ...)."
+  (let ((nodes (ignore-errors
+                 (cdr (assq 'items (k8s-get conn "/api/v1/nodes")))))
+        (table (make-hash-table :test 'equal))
+        (any nil))
+    (seq-doseq (node (or nodes []))
+      (let* ((nname (cdr (assq 'name (cdr (assq 'metadata node)))))
+             (summary (and nname (k8s-stats-summary conn nname))))
+        (when summary
+          (setq any t)
+          (seq-doseq (p (cdr (assq 'pods summary)))
+            (let* ((ref (cdr (assq 'podRef p)))
+                   (ns (cdr (assq 'namespace ref)))
+                   (nm (cdr (assq 'name ref))))
+              (when (and ns nm)
+                (puthash (format "%s/%s" ns nm) p table)))))))
+    (and any table)))
+
+(defun k8s-metrics--summary-container-disk (summary-pod cname)
+  "Return CNAME's rootfs used-bytes from SUMMARY-POD, or nil."
+  (let ((c (seq-find (lambda (c) (equal (cdr (assq 'name c)) cname))
+                     (append (cdr (assq 'containers summary-pod)) nil))))
+    (and c (cdr (assq 'usedBytes (cdr (assq 'rootfs c)))))))
+
+(defun k8s-metrics--summary-network (summary-pod)
+  "Return (RX-BYTES . TX-BYTES) cumulative counters for SUMMARY-POD, or nil."
+  (let ((net (cdr (assq 'network summary-pod))))
+    (when net
+      (let ((rx (cdr (assq 'rxBytes net)))
+            (tx (cdr (assq 'txBytes net))))
+        (and rx tx (cons rx tx))))))
+
+(defun k8s-metrics-net-sample (history key rx tx now)
+  "Record cumulative counters RX/TX at time NOW for pod KEY in HISTORY.
+HISTORY is a hash table the caller owns (one per buffer).  Computes
+the byte/sec rate against the previous sample, appends it to the
+per-pod ring buffers, and returns the updated entry plist with
+keys :rx :tx :time :rx-rate :tx-rate :rx-hist :tx-hist."
+  (let* ((e (gethash key history))
+         (prev-rx (plist-get e :rx))
+         (prev-tx (plist-get e :tx))
+         (prev-t  (plist-get e :time))
+         (dt (and prev-t (- now prev-t)))
+         (rx-rate (if (and dt (> dt 0) prev-rx)
+                      (max 0.0 (/ (- rx prev-rx) dt))
+                    0.0))
+         (tx-rate (if (and dt (> dt 0) prev-tx)
+                      (max 0.0 (/ (- tx prev-tx) dt))
+                    0.0))
+         (rx-hist (plist-get e :rx-hist))
+         (tx-hist (plist-get e :tx-hist)))
+    ;; Skip the very first sample — no delta to form a rate from yet.
+    (when dt
+      (setq rx-hist (last (append rx-hist (list rx-rate))
+                          k8s-metrics-history-length)
+            tx-hist (last (append tx-hist (list tx-rate))
+                          k8s-metrics-history-length)))
+    (let ((entry (list :rx rx :tx tx :time now
+                       :rx-rate rx-rate :tx-rate tx-rate
+                       :rx-hist rx-hist :tx-hist tx-hist)))
+      (puthash key entry history)
+      entry)))
+
+(defun k8s-metrics-pod-network-line (net-entry &optional indent)
+  "Return the pod network line for NET-ENTRY (from `k8s-metrics-net-sample').
+INDENT is the leading-space string (defaults to 4 spaces).  Two
+sparklines — rx and tx — each with the current rate.  Returns nil
+when NET-ENTRY has no history yet."
+  (when (and net-entry (plist-get net-entry :rx-hist))
+    (let ((indent (or indent "    "))
+          (rx (k8s-metrics--sparkline (plist-get net-entry :rx-hist) 12))
+          (tx (k8s-metrics--sparkline (plist-get net-entry :tx-hist) 12))
+          (rxr (k8s-metrics--human-bytes
+                (round (or (plist-get net-entry :rx-rate) 0))))
+          (txr (k8s-metrics--human-bytes
+                (round (or (plist-get net-entry :tx-rate) 0)))))
       (concat
-       (k8s-metrics--line "cpu" (car usage) (car cpu-d) (cdr cpu-d)
-                          #'k8s-metrics--human-cpu)
-       (k8s-metrics--line "mem" (cdr usage) (car mem-d) (cdr mem-d)
-                          #'k8s-metrics--human-bytes)))))
+       (propertize (format "%snet   rx " indent) 'font-lock-face 'k8s-dim)
+       (propertize rx 'font-lock-face 'k8s-gauge-low)
+       (propertize (format " %9s/s    tx " (concat rxr)) 'font-lock-face 'k8s-dim)
+       (propertize tx 'font-lock-face 'k8s-gauge-mid)
+       (propertize (format " %9s/s\n" (concat txr)) 'font-lock-face 'k8s-dim)))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Per-pod metrics buffer
@@ -267,6 +395,8 @@ nil — in which case this returns nil (no gauges to draw)."
   "Name of the pod shown in the current metrics buffer.")
 (defvar-local k8s-metrics--timer nil
   "Repeating refresh timer for the current metrics buffer.")
+(defvar-local k8s-metrics--net-history nil
+  "Hash of network-rate history for this buffer's pod (one key).")
 
 (defun k8s-metrics--buffer-stop-timer ()
   "Cancel the current metrics buffer's refresh timer."
@@ -293,11 +423,24 @@ nil — in which case this returns nil (no gauges to draw)."
   (let* ((conn k8s-metrics--conn)
          (ns k8s-metrics--ns)
          (name k8s-metrics--pod)
+         (key (format "%s/%s" ns name))
          (pod (ignore-errors
                 (k8s-get-resource
                  conn (format "/api/v1/namespaces/%s/pods/%s" ns name))))
          (metrics (k8s-metrics-collect conn ns))
-         (usage (and metrics (gethash (format "%s/%s" ns name) metrics)))
+         (usage (and metrics (gethash key metrics)))
+         (summary (k8s-metrics-collect-summary conn))
+         (summary-pod (and summary (gethash key summary)))
+         (net-entry
+          (when summary-pod
+            (let ((net (k8s-metrics--summary-network summary-pod)))
+              (when net
+                (unless k8s-metrics--net-history
+                  (setq k8s-metrics--net-history
+                        (make-hash-table :test 'equal)))
+                (k8s-metrics-net-sample k8s-metrics--net-history key
+                                        (car net) (cdr net)
+                                        (float-time))))))
          (inhibit-read-only t)
          (pt (point)))
     (erase-buffer)
@@ -310,9 +453,11 @@ nil — in which case this returns nil (no gauges to draw)."
                             'font-lock-face 'k8s-section-heading)
                 (propertize (format "   namespace %s   node %s\n\n" ns node)
                             'font-lock-face 'k8s-dim)))
-      (if (null metrics)
+      (when-let ((nl (k8s-metrics-pod-network-line net-entry "  ")))
+        (insert nl "\n"))
+      (if (and (null metrics) (null summary-pod))
           (insert (propertize
-                   "  metrics-server unavailable — no metrics to show.\n"
+                   "  metrics-server / kubelet stats unavailable.\n"
                    'font-lock-face 'k8s-dim))
         (let ((statuses (cdr (assq 'containerStatuses
                                    (cdr (assq 'status pod))))))
@@ -321,10 +466,13 @@ nil — in which case this returns nil (no gauges to draw)."
                                   'font-lock-face 'k8s-dim))
             (seq-doseq (cs statuses)
               (let* ((cname (cdr (assq 'name cs)))
-                     (u (cdr (assoc cname usage))))
+                     (u (cdr (assoc cname usage)))
+                     (disk (and summary-pod
+                                (k8s-metrics--summary-container-disk
+                                 summary-pod cname))))
                 (insert (propertize (format "  %s\n" cname)
                                     'font-lock-face 'k8s-resource-name))
-                (insert (or (k8s-metrics-container-lines pod cname u)
+                (insert (or (k8s-metrics-container-lines pod cname u disk)
                             (propertize "        (no metrics yet)\n"
                                         'font-lock-face 'k8s-dim)))
                 (insert "\n"))))))))

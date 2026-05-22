@@ -23,6 +23,15 @@ Populated by the metrics timer; read while rendering pod details to
 draw per-container gauges.  nil means no metrics yet, or that
 metrics-server is unavailable.")
 
+(defvar-local k8s--summary-cache nil
+  "Hash \"NS/POD\" -> kubelet Summary API pod entry, for this buffer.
+Source of per-container disk usage and the raw network counters.
+nil when the Summary API is unavailable.")
+
+(defvar-local k8s--net-history nil
+  "Hash \"NS/POD\" -> network-rate history plist (see `k8s-metrics-net-sample').
+Persists across metrics polls so the network sparkline has a trend.")
+
 (defvar-local k8s--metrics-timer nil
   "Repeating timer polling metrics for this pods buffer.")
 
@@ -89,11 +98,16 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
       (k8s--insert-pod-details pod))))
 
 (defun k8s--insert-pod-details (pod)
-  "Insert expanded details for POD (containers, node, labels)."
+  "Insert expanded details for POD (containers, node, labels, metrics)."
   (let* ((spec (cdr (assq 'spec pod)))
          (node (or (cdr (assq 'nodeName spec)) "?"))
          (labels (k8s--resource-labels pod))
-         (statuses (k8s--pod-container-statuses pod)))
+         (statuses (k8s--pod-container-statuses pod))
+         (podkey (format "%s/%s"
+                         (k8s--resource-namespace pod)
+                         (k8s--resource-name pod)))
+         (summary-pod (and k8s--summary-cache
+                           (gethash podkey k8s--summary-cache))))
     ;; Node
     (insert (propertize (format "    Node:   %s\n" node)
                         'font-lock-face 'k8s-dim))
@@ -106,33 +120,37 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
           (insert (propertize (format "%s=%s\n" (car pair) (cdr pair))
                               'font-lock-face 'k8s-dim))
           (setq first nil))))
+    ;; Network — pod-level (containers share a netns).
+    (when k8s--net-history
+      (when-let ((nl (k8s-metrics-pod-network-line
+                      (gethash podkey k8s--net-history) "    ")))
+        (insert nl)))
     ;; Containers — each as its own `container' subsection, so point
     ;; resting on one lets `l' / `e' / `f' target it directly.
     (when statuses
       (insert (propertize "    Containers:\n" 'font-lock-face 'k8s-dim))
-      (let ((podkey (format "%s/%s"
-                            (k8s--resource-namespace pod)
-                            (k8s--resource-name pod))))
-        (seq-doseq (cs statuses)
-          (let* ((cname (cdr (assq 'name cs)))
-                 (image (cdr (assq 'image cs)))
-                 (ready (cdr (assq 'ready cs)))
-                 (rc (or (cdr (assq 'restartCount cs)) 0))
-                 (usage (and k8s--metrics-cache
-                             (cdr (assoc cname
-                                         (gethash podkey
-                                                  k8s--metrics-cache))))))
-            (magit-insert-section (container cname)
-              (insert (propertize
-                       (format "      %-20s %-40s ready=%-5s restarts=%d\n"
-                               cname
-                               (or image "?")
-                               (if (eq ready t) "yes" "no")
-                               rc)
-                       'font-lock-face 'k8s-dim))
-              (when-let ((lines (k8s-metrics-container-lines
-                                 pod cname usage)))
-                (insert lines)))))))
+      (seq-doseq (cs statuses)
+        (let* ((cname (cdr (assq 'name cs)))
+               (image (cdr (assq 'image cs)))
+               (ready (cdr (assq 'ready cs)))
+               (rc (or (cdr (assq 'restartCount cs)) 0))
+               (usage (and k8s--metrics-cache
+                           (cdr (assoc cname
+                                       (gethash podkey k8s--metrics-cache)))))
+               (disk (and summary-pod
+                          (k8s-metrics--summary-container-disk
+                           summary-pod cname))))
+          (magit-insert-section (container cname)
+            (insert (propertize
+                     (format "      %-20s %-40s ready=%-5s restarts=%d\n"
+                             cname
+                             (or image "?")
+                             (if (eq ready t) "yes" "no")
+                             rc)
+                     'font-lock-face 'k8s-dim))
+            (when-let ((lines (k8s-metrics-container-lines
+                               pod cname usage disk)))
+              (insert lines))))))
     (insert "\n")))
 
 ;;; ---------------------------------------------------------------------------
@@ -182,21 +200,42 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
     (cancel-timer k8s--metrics-timer))
   (setq k8s--metrics-timer nil))
 
+(defun k8s--metrics-update-net-history (summary)
+  "Fold the network counters in SUMMARY into `k8s--net-history'."
+  (unless k8s--net-history
+    (setq k8s--net-history (make-hash-table :test 'equal)))
+  (let ((now (float-time)))
+    (maphash
+     (lambda (key pod-entry)
+       (let ((net (k8s-metrics--summary-network pod-entry)))
+         (when net
+           (k8s-metrics-net-sample k8s--net-history key
+                                   (car net) (cdr net) now))))
+     summary)))
+
 (defun k8s--metrics-tick (buf)
-  "Poll metrics for BUF and re-render.  Stops polling if unavailable."
+  "Poll metrics for BUF and re-render.
+Fetches both metrics-server CPU/memory and the kubelet Summary API
+\(disk + network).  Each source degrades independently; polling
+stops only when neither is available."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (derived-mode-p 'k8s-pods-mode)
         (condition-case err
-            (let ((m (k8s-metrics-collect (k8s--ensure-connection)
-                                          k8s--namespace)))
-              (if m
-                  (progn (setq k8s--metrics-cache m)
-                         (revert-buffer nil t))
-                ;; metrics.k8s.io absent — stop polling, say so once.
+            (let* ((conn (k8s--ensure-connection))
+                   (m (k8s-metrics-collect conn k8s--namespace))
+                   (s (k8s-metrics-collect-summary conn)))
+              (when m (setq k8s--metrics-cache m))
+              (when s
+                (setq k8s--summary-cache s)
+                (k8s--metrics-update-net-history s))
+              (cond
+               ((or m s) (revert-buffer nil t))
+               (t ;; nothing available — stop polling, say so once.
                 (k8s--metrics-stop)
                 (message
-                 "k8s metrics: metrics-server unavailable; gauges disabled")))
+                 "k8s metrics: metrics-server / kubelet stats unavailable; \
+gauges disabled"))))
           (error
            (message "k8s metrics: %s" (error-message-string err))))))))
 

@@ -308,12 +308,16 @@ refresh.
 1. **Phase 1** ✅ *(shipped)* — `k8s-metrics.el`: parsers, gauge,
    fetch+cache; inline CPU/mem gauges in the expanded pod section;
    graceful degradation when metrics-server is absent.
-2. **Phase 1.5** — context-aware `k8s-dispatch`; `M` opens a
-   dedicated per-pod metrics buffer.
-3. **Phase 2** — kubelet Summary API access (per-node proxy):
-   - disk: `rootfs` / `ephemeral-storage` gauges per container;
-   - network: per-pod rx/tx **rate** + sparkline graph (§3a).
-   Plus a node-level metrics view.
+2. **Phase 1.5** ✅ *(shipped)* — context-aware `k8s-dispatch`; `M`
+   opens a dedicated per-pod metrics buffer.
+3. **Phase 2** ✅ *(shipped)* — kubelet Summary API access (per-node
+   proxy):
+   - disk: per-container `rootfs` usage (gauge when the container
+     has an `ephemeral-storage' limit/request, else the raw number);
+   - network: per-pod rx/tx **rate** + sparkline graph (§3a);
+   - graceful degradation when `nodes/proxy` RBAC is missing.
+4. **Future** — a node-level metrics view (node CPU/mem/fs gauges);
+   optional CPU/memory trend sparklines next to their gauges.
 
 ## 9. Open questions
 

@@ -332,6 +332,17 @@ unavailable."
                  (k8s-get conn "/apis/metrics.k8s.io/v1beta1/nodes")))
     (error nil)))
 
+(defun k8s-stats-summary (conn node)
+  "Fetch the kubelet Summary API for NODE via CONN.
+Returns the decoded summary alist (its `pods' entry carries
+per-pod network counters and per-container `rootfs' disk usage),
+or nil when unavailable — the `nodes/proxy' subresource needs RBAC
+not every kubeconfig has, and the kubelet may be unreachable."
+  (condition-case nil
+      (k8s-get conn (format "/api/v1/nodes/%s/proxy/stats/summary"
+                            (url-hexify-string node)))
+    (error nil)))
+
 (defun k8s--extract-resource-version (response)
   "Return metadata.resourceVersion from a list RESPONSE."
   (cdr (assq 'resourceVersion (cdr (assq 'metadata response)))))
