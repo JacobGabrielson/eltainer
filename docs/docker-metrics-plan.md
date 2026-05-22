@@ -139,16 +139,21 @@ k8s gets every pod's metrics in a single call; Docker needs one
 
 ## 8. Phasing
 
-1. **Phase A** — extract `eltainer-gauge.el`, rewire `k8s-metrics.el`,
-   verify the k8s views are unchanged.  Pure refactor, no new
-   behavior.
-2. **Phase B** — `docker-metrics.el`: `/stats` fetch + CPU/memory
-   compute + inline cpu/mem gauges in the expanded container section;
-   poll timer.
-3. **Phase C** — block-I/O + network rate sparklines; PIDs gauge;
-   CPU-throttling and net-drop notes.
-4. **Phase D** — `M` per-container metrics buffer; `docker-dispatch`
-   entry.
+1. **Phase A** ✅ *(shipped)* — extracted `eltainer-gauge.el`, rewired
+   `k8s-metrics.el`; k8s views unchanged.
+2. **Phase B** ✅ *(shipped)* — `docker-metrics.el`: `/stats` fetch,
+   CPU/memory compute, inline gauges in the container section, poll
+   timer.
+3. **Phase C** ✅ *(shipped)* — block-I/O + network rate sparklines;
+   PID count; CPU-throttling and net-drop notes.  (Block-I/O is
+   absent on rootless cgroup-v2 daemons — degrades gracefully.)
+4. **Phase D** ✅ *(shipped)* — `M` per-container metrics buffer;
+   `docker-dispatch` entry.
+
+Open question §9 resolved during Phase B: `?stream=false` does
+*not* give a usable `precpu_stats` (its window is ~milliseconds), so
+CPU% is computed across consecutive eltainer polls — first rate
+appears on the 2nd poll, like the network sparkline.
 
 ## 9. Open questions
 
