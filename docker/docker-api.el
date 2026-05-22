@@ -101,6 +101,25 @@ Returns parsed JSON (or nil for empty 204 bodies) or signals on error."
     nil))
 
 ;;; ---------------------------------------------------------------------------
+;;; Metrics helpers
+
+(defun docker-container-stats (cfg id)
+  "Return a one-shot resource-stats snapshot for container ID.
+Uses `/containers/{id}/stats?stream=false' — a single sample with
+cumulative CPU / memory / blkio / network counters.  Returns nil on
+failure (container gone, daemon error) so callers degrade gracefully."
+  (condition-case nil
+      (docker-engine-get cfg (format "/containers/%s/stats" id)
+                         :query '(("stream" . "false")))
+    (error nil)))
+
+(defun docker-host-info (cfg)
+  "Return the daemon `/info' alist (carries `MemTotal', `NCPU'), or nil."
+  (condition-case nil
+      (docker-engine-get cfg "/info")
+    (error nil)))
+
+;;; ---------------------------------------------------------------------------
 ;;; Shared helpers used by from-JSON struct constructors
 
 (defun docker--epoch-to-iso (epoch)

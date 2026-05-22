@@ -26,6 +26,7 @@
     "docker-exec"
     "docker-auth"
     "docker-pull"
+    "docker-metrics"
     "docker")
   "Docker-side modules in load order (dependencies first).")
 

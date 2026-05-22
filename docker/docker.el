@@ -20,6 +20,7 @@
 (require 'docker-events)
 (require 'docker-exec)
 (require 'docker-pull)
+(require 'docker-metrics)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Customization
@@ -213,6 +214,17 @@ section."
 ;;; ---------------------------------------------------------------------------
 ;;; Container view
 
+;; Metrics state — declared here so `docker--container-insert-line'
+;; reads `docker--metrics' without a free-variable warning; the poll
+;; machinery that maintains it is below `docker-containers-mode'.
+(defvar-local docker--metrics nil
+  "Hash CONTAINER-ID -> metrics render plist (see `docker-metrics-sample').
+Filled by the stats poll timer; read while rendering container detail.")
+(defvar-local docker--host-mem nil
+  "Daemon total RAM in bytes — cached for the unlimited-memory check.")
+(defvar-local docker--metrics-timer nil
+  "Repeating container-stats poll timer for this containers buffer.")
+
 (defun docker--container-insert-line (container)
   "Insert a single container summary line as a section."
   (let* ((name (docker-container-name container))
@@ -238,6 +250,10 @@ section."
       (insert (propertize (format "    Command: %s\n"
                                   (or (docker-container-command container) ""))
                           'font-lock-face 'docker-dim))
+      (when-let ((m (and docker--metrics
+                         (gethash (docker-container-id container)
+                                  docker--metrics))))
+        (insert (or (docker-metrics-container-lines m) "")))
       (insert "\n"))))
 
 (defvar-local docker-containers--show-all nil
@@ -309,6 +325,62 @@ section."
               (lambda (_ignore-auto _noconfirm) (docker--containers-refresh)))
   (add-hook 'kill-buffer-hook #'docker--cleanup nil t))
 
+;;; --- Container metrics polling --------------------------------------------
+;;
+;; `/stats' is one call per container, so — like the k8s metrics timer
+;; — it polls on its own schedule, off the /events refresh hot path.
+
+(defun docker--metrics-stop ()
+  "Stop the container-stats poll for the current buffer."
+  (when (timerp docker--metrics-timer)
+    (cancel-timer docker--metrics-timer))
+  (setq docker--metrics-timer nil))
+
+(defun docker--metrics-tick (buf)
+  "Poll `/stats' for every running container in BUF, then re-render."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (when (derived-mode-p 'docker-containers-mode)
+        (condition-case err
+            (let* ((cfg (docker--ensure-config))
+                   (running (cl-remove-if-not
+                             (lambda (c)
+                               (equal (docker-container-state c) "running"))
+                             (append (docker-list-containers cfg) nil))))
+              (unless docker--metrics
+                (setq docker--metrics (make-hash-table :test 'equal)))
+              (unless docker--host-mem
+                (let ((info (docker-host-info cfg)))
+                  (setq docker--host-mem
+                        (and info (cdr (assq 'MemTotal info))))))
+              (if (> (length running) docker-metrics-max-containers)
+                  (message "docker metrics: %d running over the %d cap — \
+poll skipped"
+                           (length running) docker-metrics-max-containers)
+                (let ((now (float-time)))
+                  (dolist (c running)
+                    (let ((stats (docker-container-stats
+                                  cfg (docker-container-id c))))
+                      (when stats
+                        (docker-metrics-sample docker--metrics
+                                               (docker-container-id c)
+                                               stats docker--host-mem now)))))
+                (revert-buffer nil t)))
+          (error
+           (message "docker metrics: %s" (error-message-string err))))))))
+
+(defun docker--metrics-start ()
+  "Begin container-stats polling for the current containers buffer."
+  (docker--metrics-stop)
+  (let ((buf (current-buffer)))
+    ;; Immediate first poll so gauges appear without a full interval's wait.
+    (run-at-time 0.3 nil #'docker--metrics-tick buf)
+    (setq docker--metrics-timer
+          (run-at-time docker-metrics-refresh-interval
+                       docker-metrics-refresh-interval
+                       #'docker--metrics-tick buf)))
+  (add-hook 'kill-buffer-hook #'docker--metrics-stop nil t))
+
 ;;;###autoload
 (defun docker-containers ()
   "Display Docker containers (running by default; `a' toggles to show all)."
@@ -321,7 +393,8 @@ section."
         (docker--subscribe-events
          cfg
          (docker-events-match-types "container" "network")
-         #'docker--containers-refresh)))
+         #'docker--containers-refresh))
+      (docker--metrics-start))
     (pop-to-buffer buf)))
 
 (defun docker--images-refresh ()
@@ -518,7 +591,8 @@ section."
 
 ;;;###autoload
 (defun docker ()
-  "Main entry point for the eltainer docker views.  Shows running containers by default."
+  "Main entry point for the eltainer docker views.
+Shows running containers by default."
   (interactive)
   (docker-containers))
 
