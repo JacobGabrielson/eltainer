@@ -173,8 +173,8 @@ the helper exits non-zero, or the JSON is malformed."
                   "/api/v1/namespaces/%s/secrets")
     (ingresses    "/apis/networking.k8s.io/v1/ingresses"
                   "/apis/networking.k8s.io/v1/namespaces/%s/ingresses")
-    (sandboxes    "/apis/agents.x-k8s.io/v1beta1/sandboxes"
-                  "/apis/agents.x-k8s.io/v1beta1/namespaces/%s/sandboxes"))
+    (sandboxes    "/apis/agents.x-k8s.io/v1alpha1/sandboxes"
+                  "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes"))
   "Alist mapping resource types (plural) to (ALL-PATH NAMESPACED-PATH-TEMPLATE).
 Keys are plural to match `k8s--define-view's macro name convention.")
 
@@ -196,7 +196,7 @@ Keys are plural to match `k8s--define-view's macro name convention.")
     (configmap   . "/api/v1/namespaces/%s/configmaps/%s")
     (secret      . "/api/v1/namespaces/%s/secrets/%s")
     (ingress     . "/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s")
-    (sandbox     . "/apis/agents.x-k8s.io/v1beta1/namespaces/%s/sandboxes/%s"))
+    (sandbox     . "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes/%s"))
   "Alist mapping section types to API path templates (namespace, name).")
 
 (defun k8s-delete-resource (conn type namespace name)
@@ -311,9 +311,9 @@ CONTAINER specifies which container (required for multi-container pods)."
 Returns nil (rather than erroring) when the `agents.x-k8s.io' CRD
 isn't installed in the cluster — callers degrade gracefully."
   (let ((path (if namespace
-                  (format "/apis/agents.x-k8s.io/v1beta1/namespaces/%s/sandboxes"
+                  (format "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes"
                           namespace)
-                "/apis/agents.x-k8s.io/v1beta1/sandboxes")))
+                "/apis/agents.x-k8s.io/v1alpha1/sandboxes")))
     (condition-case nil
         (cdr (assq 'items (k8s-get conn path)))
       (error nil))))

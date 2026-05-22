@@ -1176,7 +1176,7 @@ where the cursor is."
   #'k8s--insert-secret-line)
 
 ;;; ---------------------------------------------------------------------------
-;;; Sandboxes (agent-sandbox SIG — agents.x-k8s.io/v1beta1)
+;;; Sandboxes (agent-sandbox SIG — agents.x-k8s.io/v1alpha1)
 
 (defun k8s--sandbox-ready (sandbox)
   "Return SANDBOX's readiness as a short string for the READY column.
