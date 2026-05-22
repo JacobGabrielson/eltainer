@@ -129,18 +129,27 @@ on the same row instead of jumping to the top."
    ((listp value)   (k8s--resource-uid value))))
 
 (defun k8s--save-point-context ()
-  "Capture state about point so we can re-seek the same row after refresh."
-  (let* ((sec (magit-current-section))
+  "Capture point + scroll state so a refresh can restore the same row.
+Reads the *window's* point when the buffer is displayed — a refresh
+runs from a timer, and the buffer's own `point' can lag what the
+user actually sees in the window."
+  (let* ((win (get-buffer-window (current-buffer) t))
+         (pos (if win (window-point win) (point)))
+         (sec (save-excursion (goto-char pos) (magit-current-section)))
          (val (and sec (ignore-errors (oref sec value)))))
-    (list :id   (k8s--section-stable-id val)
-          :line (line-number-at-pos))))
+    (list :id        (k8s--section-stable-id val)
+          :line      (line-number-at-pos pos)
+          :win-start (and win (window-start win)))))
 
 (defun k8s--restore-point-context (ctx)
   "Re-seek to the section matching CTX (from `k8s--save-point-context').
-Also re-runs the hl-line overlay if the mode is on — the timer-driven
-refresh doesn't fire `post-command-hook' to recreate it."
+Restores point, the window's point, and — when still in range — the
+window's scroll position, so a timer-driven refresh (events, watch,
+metrics poll) doesn't jump the buffer.  Also re-runs the hl-line
+overlay, since a timer refresh fires no `post-command-hook'."
   (let ((id (plist-get ctx :id))
         (line (plist-get ctx :line))
+        (win-start (plist-get ctx :win-start))
         target)
     (when id
       (save-excursion
@@ -158,6 +167,13 @@ refresh doesn't fire `post-command-hook' to recreate it."
      (line   (goto-char (point-min))
              (forward-line (max 0 (1- line))))
      (t      (goto-char (point-min))))
+    (let ((win (get-buffer-window (current-buffer) t)))
+      (when win
+        (set-window-point win (point))
+        ;; Reapply the prior scroll position; the NOFORCE arg lets
+        ;; redisplay nudge it if `point' would land off-screen.
+        (when (and win-start (<= win-start (point-max)))
+          (set-window-start win win-start t))))
     (when (and (bound-and-true-p hl-line-mode)
                (fboundp 'hl-line-highlight))
       (hl-line-highlight))))
@@ -530,16 +546,14 @@ TYPE is \"ADDED\", \"MODIFIED\", \"DELETED\", or \"BOOKMARK\"."
                                (k8s--watch-render)))))))))
 
 (defun k8s--watch-render ()
-  "Re-render the current buffer from the resource table, preserving position."
-  (let ((saved-point (point))
-        (saved-win-start (when (get-buffer-window)
-                           (window-start (get-buffer-window)))))
-    (revert-buffer nil t)
-    ;; Restore position
-    (goto-char (min saved-point (point-max)))
-    (when (and saved-win-start (get-buffer-window))
-      (set-window-start (get-buffer-window)
-                        (min saved-win-start (point-max))))))
+  "Re-render the current buffer from the resource table.
+Point and scroll position are preserved by the view's refresh
+itself (`k8s--save-point-context' / `k8s--restore-point-context');
+this just triggers the revert.  The previous manual save/restore
+here clobbered that section-aware restore with a raw — and, from a
+timer, often stale — buffer position, which is what jumped the
+buffer to the top on every watch event."
+  (revert-buffer nil t))
 
 (defvar-local k8s--watch-starting nil
   "Non-nil while a watch start is in progress.")
@@ -701,8 +715,39 @@ LINE-FN inserts one item."
 
 (autoload 'k8s-pods "k8s-pods" nil t)
 
-(transient-define-prefix k8s-dispatch ()
-  "Main eltainer k8s command menu."
+;;; ---------------------------------------------------------------------------
+;;; Context-aware dispatch
+
+;; Pod-action commands live in k8s-pods.el; k8s.el doesn't `require' it
+;; (the dependency runs the other way).  Declare them so the
+;; byte-compiler is quiet — they resolve at runtime, by which point a
+;; k8s-pods buffer is loaded.
+(declare-function k8s-pod-view-logs       "k8s-pods")
+(declare-function k8s-pod-exec-at-point   "k8s-pods")
+(declare-function k8s-pod-browse-at-point "k8s-pods")
+(declare-function k8s-pod-metrics-at-point "k8s-pods")
+
+(defun k8s--section-type-at-point ()
+  "Return the magit-section TYPE under point, or nil."
+  (let ((sec (magit-current-section)))
+    (and sec (oref sec type))))
+
+(defun k8s--point-on-p (type)
+  "Return non-nil when the section under point has section-type TYPE."
+  (eq (k8s--section-type-at-point) type))
+
+(defun k8s--point-on-resource-p ()
+  "Return non-nil when point is on a non-pod k8s resource section.
+That is: a section whose value is a resource alist (carries
+`metadata') and whose type is neither `pod' nor `container'."
+  (let ((sec (magit-current-section)))
+    (and sec
+         (not (memq (oref sec type) '(pod container)))
+         (let ((v (oref sec value)))
+           (and (listp v) (assq 'metadata v))))))
+
+(transient-define-prefix k8s-view-dispatch ()
+  "Switch to another Kubernetes resource view."
   [["Workloads"
     ("p" "Pods"         k8s-pods)
     ("d" "Deployments"  k8s-deployments)
@@ -715,14 +760,40 @@ LINE-FN inserts one item."
     ("s" "Services"     k8s-services)
     ("i" "Ingresses"    k8s-ingresses)
     ("m" "ConfigMaps"   k8s-configmaps)
-    ("x" "Secrets"      k8s-secrets)]]
-  ["Cluster"
-   ("b" "Switch context" eltainer-switch-kubeconfig)]
-  ["Filter"
-   ("N" "Namespace"     k8s-set-namespace)]
-  ["Navigate"
-   ("g" "Refresh"       revert-buffer)
-   ("q" "Quit"          quit-window)])
+    ("x" "Secrets"      k8s-secrets)]])
+
+(transient-define-prefix k8s-dispatch ()
+  "Context-aware command menu for the Kubernetes views.
+The first group reflects the resource under point — pod, container,
+or another resource — so `?' only ever offers actions that apply
+where the cursor is."
+  [:if (lambda () (k8s--point-on-p 'pod))
+   "Pod at point"
+   ("l" "Logs"       k8s-pod-view-logs)
+   ("e" "Exec"       k8s-pod-exec-at-point)
+   ("f" "Browse fs"  k8s-pod-browse-at-point)
+   ("M" "Metrics"    k8s-pod-metrics-at-point)
+   ("i" "Describe"   k8s-describe)
+   ("d" "Delete"     k8s-delete-at-point)]
+  [:if (lambda () (k8s--point-on-p 'container))
+   "Container at point"
+   ("l" "Logs"       k8s-pod-view-logs)
+   ("e" "Exec"       k8s-pod-exec-at-point)
+   ("f" "Browse fs"  k8s-pod-browse-at-point)
+   ("M" "Metrics"    k8s-pod-metrics-at-point)]
+  [:if k8s--point-on-resource-p
+   "Resource at point"
+   ("i" "Describe"   k8s-describe)
+   ("d" "Delete"     k8s-delete-at-point)]
+  [["View"
+    ("v" "Switch view…" k8s-view-dispatch)]
+   ["Cluster"
+    ("b" "Switch context" eltainer-switch-kubeconfig)
+    ("w" "Toggle watch"   k8s-watch-toggle)
+    ("N" "Namespace"      k8s-set-namespace)]
+   ["Buffer"
+    ("g" "Refresh" revert-buffer)
+    ("q" "Quit"    quit-window)]])
 
 ;;;###autoload
 (defun k8s ()

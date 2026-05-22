@@ -515,6 +515,17 @@ or `kubectl debug --image=busybox -it %s --target=%s'"
               (split-string-shell-command input))))
       (k8s-exec-interactive conn ns name container cmd))))
 
+(defun k8s-pod-metrics-at-point ()
+  "Open the metrics buffer for the pod at point.
+Works on a pod line or a container subsection — the metrics buffer
+covers every container in the pod either way."
+  (interactive)
+  (let* ((target (k8s--pod+container-at-point))
+         (pod (car target)))
+    (k8s-metrics-buffer (k8s--ensure-connection)
+                        (k8s--resource-namespace pod)
+                        (k8s--resource-name pod))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Major mode
 
@@ -529,6 +540,7 @@ or `kubectl debug --image=busybox -it %s --target=%s'"
 (keymap-set k8s-pods-mode-map "l" #'k8s-pod-view-logs)
 (keymap-set k8s-pods-mode-map "e" #'k8s-pod-exec-at-point)
 (keymap-set k8s-pods-mode-map "f" #'k8s-pod-browse-at-point)
+(keymap-set k8s-pods-mode-map "M" #'k8s-pod-metrics-at-point)
 
 (define-derived-mode k8s-pods-mode magit-section-mode "K8s:Pods"
   "Major mode for viewing Kubernetes pods.

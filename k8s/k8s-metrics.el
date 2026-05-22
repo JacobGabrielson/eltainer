@@ -251,5 +251,111 @@ nil — in which case this returns nil (no gauges to draw)."
        (k8s-metrics--line "mem" (cdr usage) (car mem-d) (cdr mem-d)
                           #'k8s-metrics--human-bytes)))))
 
+;;; ---------------------------------------------------------------------------
+;;; Per-pod metrics buffer
+;;
+;; A focused `*k8s:metrics:NS/POD*' buffer reachable with `M' from the
+;; pods view (see `k8s-pod-metrics-at-point').  Shows every container's
+;; CPU/memory gauges without needing the pod section expanded, and
+;; self-refreshes on its own timer.
+
+(defvar-local k8s-metrics--conn nil
+  "Connection for the current metrics buffer.")
+(defvar-local k8s-metrics--ns nil
+  "Namespace of the pod shown in the current metrics buffer.")
+(defvar-local k8s-metrics--pod nil
+  "Name of the pod shown in the current metrics buffer.")
+(defvar-local k8s-metrics--timer nil
+  "Repeating refresh timer for the current metrics buffer.")
+
+(defun k8s-metrics--buffer-stop-timer ()
+  "Cancel the current metrics buffer's refresh timer."
+  (when (timerp k8s-metrics--timer)
+    (cancel-timer k8s-metrics--timer))
+  (setq k8s-metrics--timer nil))
+
+(defvar-keymap k8s-metrics-mode-map
+  :parent special-mode-map
+  "g" #'k8s-metrics-buffer-refresh
+  "q" #'quit-window)
+
+(define-derived-mode k8s-metrics-mode special-mode "K8s:Metrics"
+  "Major mode for the per-pod metrics buffer."
+  :group 'k8s-metrics
+  (setq-local truncate-lines t)
+  (add-hook 'kill-buffer-hook #'k8s-metrics--buffer-stop-timer nil t))
+
+(defun k8s-metrics-buffer-refresh ()
+  "Re-fetch and re-render the current metrics buffer."
+  (interactive)
+  (unless (derived-mode-p 'k8s-metrics-mode)
+    (user-error "Not a k8s metrics buffer"))
+  (let* ((conn k8s-metrics--conn)
+         (ns k8s-metrics--ns)
+         (name k8s-metrics--pod)
+         (pod (ignore-errors
+                (k8s-get-resource
+                 conn (format "/api/v1/namespaces/%s/pods/%s" ns name))))
+         (metrics (k8s-metrics-collect conn ns))
+         (usage (and metrics (gethash (format "%s/%s" ns name) metrics)))
+         (inhibit-read-only t)
+         (pt (point)))
+    (erase-buffer)
+    (cond
+     ((null pod)
+      (insert (format "Pod %s/%s not found.\n" ns name)))
+     (t
+      (let ((node (or (cdr (assq 'nodeName (cdr (assq 'spec pod)))) "?")))
+        (insert (propertize (format "Pod  %s" name)
+                            'font-lock-face 'k8s-section-heading)
+                (propertize (format "   namespace %s   node %s\n\n" ns node)
+                            'font-lock-face 'k8s-dim)))
+      (if (null metrics)
+          (insert (propertize
+                   "  metrics-server unavailable — no metrics to show.\n"
+                   'font-lock-face 'k8s-dim))
+        (let ((statuses (cdr (assq 'containerStatuses
+                                   (cdr (assq 'status pod))))))
+          (if (or (null statuses) (zerop (length statuses)))
+              (insert (propertize "  (pod has no running containers)\n"
+                                  'font-lock-face 'k8s-dim))
+            (seq-doseq (cs statuses)
+              (let* ((cname (cdr (assq 'name cs)))
+                     (u (cdr (assoc cname usage))))
+                (insert (propertize (format "  %s\n" cname)
+                                    'font-lock-face 'k8s-resource-name))
+                (insert (or (k8s-metrics-container-lines pod cname u)
+                            (propertize "        (no metrics yet)\n"
+                                        'font-lock-face 'k8s-dim)))
+                (insert "\n"))))))))
+    (goto-char (min pt (point-max)))))
+
+(defun k8s-metrics--buffer-start-timer ()
+  "(Re)start the current metrics buffer's refresh timer."
+  (k8s-metrics--buffer-stop-timer)
+  (let ((buf (current-buffer)))
+    ;; The buffer's kill-buffer-hook cancels this timer; the
+    ;; `buffer-live-p' guard just covers the race.
+    (setq k8s-metrics--timer
+          (run-at-time k8s-metrics-refresh-interval
+                       k8s-metrics-refresh-interval
+                       (lambda ()
+                         (when (buffer-live-p buf)
+                           (with-current-buffer buf
+                             (k8s-metrics-buffer-refresh))))))))
+
+(defun k8s-metrics-buffer (conn ns pod-name)
+  "Open and display the metrics buffer for pod NS/POD-NAME via CONN."
+  (let ((buf (get-buffer-create (format "*k8s:metrics:%s/%s*" ns pod-name))))
+    (with-current-buffer buf
+      (k8s-metrics-mode)
+      (setq k8s-metrics--conn conn
+            k8s-metrics--ns ns
+            k8s-metrics--pod pod-name)
+      (k8s-metrics-buffer-refresh)
+      (k8s-metrics--buffer-start-timer))
+    (pop-to-buffer buf)
+    (message "k8s metrics: %s/%s — g refreshes, q quits" ns pod-name)))
+
 (provide 'k8s-metrics)
 ;;; k8s-metrics.el ends here
