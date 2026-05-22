@@ -11,9 +11,12 @@
 (require 'magit-section)
 (require 'transient)
 (require 'eltainer-ui)
+(require 'eltainer-gauge)
 (require 'k8s-config)
 (require 'k8s-api)
 (require 'k8s-watch)
+(require 'k8s-metrics)
+(require 'k8s-prom)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Customization
@@ -727,7 +730,6 @@ LINE-FN inserts one item."
 (declare-function k8s-pod-exec-at-point   "k8s-pods")
 (declare-function k8s-pod-browse-at-point "k8s-pods")
 (declare-function k8s-pod-metrics-at-point "k8s-pods")
-(declare-function k8s-nodes-metrics       "k8s-metrics")
 
 (defun k8s--section-type-at-point ()
   "Return the magit-section TYPE under point, or nil."
@@ -763,6 +765,8 @@ That is: a section whose value is a resource alist (carries
     ("i" "Ingresses"    k8s-ingresses)
     ("m" "ConfigMaps"   k8s-configmaps)
     ("x" "Secrets"      k8s-secrets)]
+   ["Cluster"
+    ("o" "Nodes"        k8s-nodes)]
    ["Agents"
     ("A" "Sandboxes"    k8s-sandboxes)]])
 
@@ -795,7 +799,7 @@ where the cursor is."
     ("b" "Switch context" eltainer-switch-kubeconfig)
     ("w" "Toggle watch"   k8s-watch-toggle)
     ("N" "Namespace"      k8s-set-namespace)
-    ("o" "Node metrics"   k8s-nodes-metrics)]
+    ("o" "Nodes"          k8s-nodes)]
    ["Buffer"
     ("g" "Refresh" revert-buffer)
     ("q" "Quit"    quit-window)]])
@@ -1242,6 +1246,309 @@ agent-sandbox controller isn't running)."
   (format "  %-36s %-12s %-22s %-16s %s\n"
           "NAME" "READY" "SERVICE" "POD IP" "AGE")
   #'k8s--insert-sandbox-line)
+
+;;; ---------------------------------------------------------------------------
+;;; Nodes (cluster-scoped — name/roles/status/version + live perf gauges)
+;;
+;; Bespoke rather than `k8s--define-view'-generated: nodes have no
+;; namespace, so the macro's namespace grouping does not apply, and
+;; the view folds in live CPU/memory/disk gauges (metrics-server +
+;; kubelet) plus, when Prometheus is reachable, load averages and
+;; hour-long trend sparklines.
+
+(defvar-local k8s--nodes-cm-history nil
+  "Hash NODE-NAME -> (:cpu-hist :mem-hist) for in-buffer trend sparklines.
+Drives the gauge sparklines when Prometheus is unavailable; persists
+across refreshes so the trend accumulates.")
+
+(defvar-local k8s--nodes-timer nil
+  "Repeating refresh timer for the current nodes buffer.")
+
+(defun k8s--node-roles (node)
+  "Return NODE's roles as a comma-joined string, or \"<none>\"."
+  (let (roles)
+    (dolist (pair (k8s--resource-labels node))
+      (let ((k (symbol-name (car pair))))
+        (when (string-prefix-p "node-role.kubernetes.io/" k)
+          (push (substring k (length "node-role.kubernetes.io/")) roles))))
+    (if roles (mapconcat #'identity (sort roles #'string<) ",") "<none>")))
+
+(defun k8s--node-condition (node type)
+  "Return the status string of NODE's condition TYPE, or nil."
+  (catch 'found
+    (seq-doseq (c (or (cdr (assq 'conditions (cdr (assq 'status node)))) []))
+      (when (equal (cdr (assq 'type c)) type)
+        (throw 'found (cdr (assq 'status c)))))
+    nil))
+
+(defun k8s--node-status (node)
+  "Return NODE's display status: Ready / NotReady, plus SchedulingDisabled."
+  (let ((ready (equal (k8s--node-condition node "Ready") "True"))
+        (cordoned (eq (cdr (assq 'unschedulable (cdr (assq 'spec node)))) t)))
+    (concat (if ready "Ready" "NotReady")
+            (if cordoned ",SchedulingDisabled" ""))))
+
+(defun k8s--node-address (node type)
+  "Return NODE's address of TYPE (e.g. \"InternalIP\"), or nil."
+  (catch 'found
+    (seq-doseq (a (or (cdr (assq 'addresses (cdr (assq 'status node)))) []))
+      (when (equal (cdr (assq 'type a)) type)
+        (throw 'found (cdr (assq 'address a)))))
+    nil))
+
+(defun k8s--node-human-mem (qty)
+  "Humanize a memory quantity string QTY (e.g. \"8141034Ki\"), or \"?\"."
+  (if qty (eltainer-human-bytes (k8s-metrics--parse-memory qty)) "?"))
+
+(defun k8s--fmt-load (n)
+  "Format a load-average number N to two decimals, or \"—\" when nil."
+  (if (numberp n) (format "%.2f" n) "—"))
+
+(defun k8s--nodes-pod-counts (pods)
+  "Return a hash NODE-NAME -> count of scheduled pods, from the PODS vector."
+  (let ((h (make-hash-table :test 'equal)))
+    (seq-doseq (p (or pods []))
+      (let ((nn (cdr (assq 'nodeName (cdr (assq 'spec p))))))
+        (when nn (puthash nn (1+ (gethash nn h 0)) h))))
+    h))
+
+(defun k8s--insert-node-gauges (metrics prom cm-hist)
+  "Insert NODE's cpu/mem/disk gauge lines and, when present, a load line.
+METRICS is the per-node plist from `k8s-metrics-collect-nodes';
+PROM is the per-node Prometheus plist; CM-HIST is the in-buffer
+\(:cpu-hist :mem-hist) trend plist.  Prometheus history wins over
+the in-buffer trend when both exist."
+  (when metrics
+    (insert (eltainer-gauge-line
+             "cpu" (plist-get metrics :cpu-used) (plist-get metrics :cpu-total)
+             'alloc #'k8s-metrics--human-cpu
+             (or (plist-get prom :cpu-hist) (plist-get cm-hist :cpu-hist))))
+    (insert (eltainer-gauge-line
+             "mem" (plist-get metrics :mem-used) (plist-get metrics :mem-total)
+             'alloc #'eltainer-human-bytes
+             (or (plist-get prom :mem-hist) (plist-get cm-hist :mem-hist))))
+    (insert (eltainer-gauge-line
+             "fs" (plist-get metrics :fs-used) (plist-get metrics :fs-total)
+             'capacity #'eltainer-human-bytes)))
+  (when prom
+    (let ((l1 (plist-get prom :load1))
+          (l5 (plist-get prom :load5))
+          (l15 (plist-get prom :load15)))
+      (when (or l1 l5 l15)
+        (insert (propertize
+                 (format "        load %s  %s  %s   (1m / 5m / 15m)\n"
+                         (k8s--fmt-load l1) (k8s--fmt-load l5)
+                         (k8s--fmt-load l15))
+                 'font-lock-face 'eltainer-gauge-empty))))))
+
+(defun k8s--insert-node-details (node metrics prom pod-count)
+  "Insert the expandable detail body for NODE.
+METRICS / PROM / POD-COUNT are as in `k8s--insert-node-section'."
+  (let* ((status (cdr (assq 'status node)))
+         (info (cdr (assq 'nodeInfo status)))
+         (cap (cdr (assq 'capacity status)))
+         (alloc (cdr (assq 'allocatable status)))
+         (taints (cdr (assq 'taints (cdr (assq 'spec node))))))
+    (insert (propertize "    Conditions: " 'font-lock-face 'k8s-dim))
+    (let ((first t))
+      (dolist (type '("Ready" "MemoryPressure" "DiskPressure"
+                      "PIDPressure" "NetworkUnavailable"))
+        (let ((st (k8s--node-condition node type)))
+          (when st
+            (unless first (insert "  "))
+            (setq first nil)
+            ;; Ready=True is healthy; a pressure condition True is not.
+            (let ((good (if (equal type "Ready")
+                            (equal st "True")
+                          (not (equal st "True")))))
+              (insert (propertize (format "%s=%s" type st)
+                                  'font-lock-face
+                                  (if good 'k8s-status-running
+                                    'k8s-status-failed))))))))
+    (insert "\n")
+    (insert (propertize
+             (format "    Capacity:   cpu %s   mem %s   pods %s\n"
+                     (or (cdr (assq 'cpu cap)) "?")
+                     (k8s--node-human-mem (cdr (assq 'memory cap)))
+                     (or (cdr (assq 'pods cap)) "?"))
+             'font-lock-face 'k8s-dim))
+    (insert (propertize
+             (format "    Pods:       %d / %s scheduled\n"
+                     pod-count (or (cdr (assq 'pods alloc)) "?"))
+             'font-lock-face 'k8s-dim))
+    (let ((ip (k8s--node-address node "InternalIP"))
+          (host (k8s--node-address node "Hostname")))
+      (when (or ip host)
+        (insert (propertize
+                 (format "    Address:    %s%s\n"
+                         (if ip (format "InternalIP %s" ip) "")
+                         (if host (format "   Hostname %s" host) ""))
+                 'font-lock-face 'k8s-dim))))
+    (insert (propertize
+             (format "    System:     %s / kernel %s / %s\n"
+                     (or (cdr (assq 'osImage info)) "?")
+                     (or (cdr (assq 'kernelVersion info)) "?")
+                     (or (cdr (assq 'containerRuntimeVersion info)) "?"))
+             'font-lock-face 'k8s-dim))
+    (when (and taints (> (length taints) 0))
+      (insert (propertize "    Taints:     " 'font-lock-face 'k8s-dim))
+      (let (parts)
+        (seq-doseq (tn taints)
+          (let ((key (cdr (assq 'key tn)))
+                (val (cdr (assq 'value tn)))
+                (eff (cdr (assq 'effect tn))))
+            (push (format "%s%s:%s" key
+                          (if (and val (> (length val) 0)) (concat "=" val) "")
+                          eff)
+                  parts)))
+        (insert (propertize (mapconcat #'identity (nreverse parts) "  ")
+                            'font-lock-face 'k8s-dim)
+                "\n")))
+    (k8s--insert-labels (k8s--resource-labels node) "    ")
+    (k8s--insert-node-gauges metrics prom
+                             (and k8s--nodes-cm-history
+                                  (gethash (k8s--resource-name node)
+                                           k8s--nodes-cm-history)))
+    (insert "\n")))
+
+(defun k8s--insert-node-section (node metrics prom pod-count)
+  "Insert a collapsible magit-section for NODE.
+METRICS is NODE's plist from `k8s-metrics-collect-nodes' (or nil);
+PROM is NODE's Prometheus plist (or nil); POD-COUNT is the number
+of pods scheduled on it."
+  (let* ((name (k8s--resource-name node))
+         (roles (k8s--node-roles node))
+         (status (k8s--node-status node))
+         (info (cdr (assq 'nodeInfo (cdr (assq 'status node)))))
+         (version (or (cdr (assq 'kubeletVersion info)) "?"))
+         (age (k8s--age-string (k8s--resource-creation-time node)))
+         (ready (string-prefix-p "Ready" status)))
+    (magit-insert-section (node node t)
+      (magit-insert-heading
+        (format "  %-38s %-15s %-20s %-10s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize roles 'font-lock-face 'k8s-dim)
+                (propertize status 'font-lock-face
+                            (if ready 'k8s-status-running 'k8s-status-failed))
+                (propertize version 'font-lock-face 'k8s-dim)
+                (propertize age 'font-lock-face 'k8s-dim)))
+      (k8s--insert-node-details node metrics prom pod-count))))
+
+(defun k8s--nodes-refresh ()
+  "Re-fetch and re-render the nodes buffer."
+  (let* ((inhibit-read-only t)
+         (ctx (k8s--save-point-context))
+         (conn (k8s--ensure-connection))
+         (nodes (k8s-list-nodes conn))
+         (metrics (let ((h (make-hash-table :test 'equal)))
+                    (dolist (m (k8s-metrics-collect-nodes conn))
+                      (puthash (plist-get m :name) m h))
+                    h))
+         (pod-counts (k8s--nodes-pod-counts
+                      (ignore-errors (k8s-list-pods conn))))
+         (node-ips (let (out)
+                     (seq-doseq (n nodes)
+                       (push (cons (k8s--resource-name n)
+                                   (k8s--node-address n "InternalIP"))
+                             out))
+                     (nreverse out)))
+         (prom (k8s-prom-node-metrics conn node-ips)))
+    (unless k8s--nodes-cm-history
+      (setq k8s--nodes-cm-history (make-hash-table :test 'equal)))
+    (erase-buffer)
+    (setq header-line-format nil)
+    (magit-insert-section (k8s-nodes-root)
+      (k8s--insert-header "Nodes")
+      (let ((ps (k8s-prom-status-string conn)))
+        (insert (propertize "Prometheus: " 'font-lock-face 'k8s-dim)
+                (if ps
+                    (propertize ps 'font-lock-face 'k8s-status-running)
+                  (propertize "not found — load averages + history disabled"
+                              'font-lock-face 'k8s-dim))
+                "\n\n"))
+      (insert (propertize
+               (format "  %-38s %-15s %-20s %-10s %s\n"
+                       "NAME" "ROLES" "STATUS" "VERSION" "AGE")
+               'font-lock-face 'k8s-section-heading))
+      (insert "\n")
+      (if (or (null nodes) (zerop (length nodes)))
+          (insert (propertize "  no nodes — API unreachable.\n"
+                              'font-lock-face 'k8s-dim))
+        (seq-doseq (node nodes)
+          (let* ((name (k8s--resource-name node))
+                 (m (gethash name metrics)))
+            ;; Sample cpu/mem into the in-buffer history so the trend
+            ;; sparkline has data even with no Prometheus.
+            (k8s-metrics-cm-sample k8s--nodes-cm-history name
+                                   (and m (plist-get m :cpu-used))
+                                   (and m (plist-get m :mem-used)))
+            (k8s--insert-node-section
+             node m (and prom (gethash name prom))
+             (gethash name pod-counts 0))))))
+    (let ((magit-section-cache-visibility nil))
+      (magit-section-show magit-root-section))
+    (k8s--restore-point-context ctx)))
+
+(defvar-keymap k8s-nodes-mode-map
+  :parent magit-section-mode-map)
+(map-keymap (lambda (key def)
+              (keymap-set k8s-nodes-mode-map (key-description (vector key)) def))
+            k8s-common-map)
+
+(defun k8s--nodes-stop-timer ()
+  "Cancel the nodes buffer's refresh timer."
+  (when (timerp k8s--nodes-timer)
+    (cancel-timer k8s--nodes-timer))
+  (setq k8s--nodes-timer nil))
+
+(define-derived-mode k8s-nodes-mode magit-section-mode "K8s:Nodes"
+  "Major mode for the Kubernetes nodes view.
+
+\\{k8s-nodes-mode-map}"
+  :interactive nil
+  :group 'k8s
+  (setq-local revert-buffer-function
+              (lambda (_ignore-auto _noconfirm) (k8s--nodes-refresh)))
+  (add-hook 'kill-buffer-hook #'k8s--nodes-stop-timer nil t))
+
+(defun k8s--nodes-tick (buf)
+  "Refresh nodes BUF from its timer, when still live and in nodes-mode."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (when (derived-mode-p 'k8s-nodes-mode)
+        (condition-case err
+            (k8s--nodes-refresh)
+          (error (message "k8s nodes: %s" (error-message-string err))))))))
+
+(defun k8s--nodes-start-timer ()
+  "(Re)start the nodes buffer's refresh timer."
+  (k8s--nodes-stop-timer)
+  (setq k8s--nodes-timer
+        (run-at-time k8s-metrics-refresh-interval
+                     k8s-metrics-refresh-interval
+                     #'k8s--nodes-tick (current-buffer))))
+
+;;;###autoload
+(defun k8s-nodes ()
+  "Display the cluster's nodes with live CPU / memory / disk gauges.
+Each node expands (TAB) to conditions, capacity, addresses, system
+info and taints.  When Prometheus is reachable, the gauges also
+carry load averages and hour-long trend sparklines."
+  (interactive)
+  (let ((buf (get-buffer-create "*k8s:nodes*")))
+    (with-current-buffer buf
+      ;; Guard the mode re-run: re-entering the major mode would
+      ;; `kill-all-local-variables' and orphan the refresh timer.
+      (unless (derived-mode-p 'k8s-nodes-mode)
+        (k8s-nodes-mode))
+      (k8s--ensure-connection)
+      (k8s--nodes-refresh)
+      (k8s--nodes-start-timer))
+    (pop-to-buffer buf)))
+
+(define-obsolete-function-alias 'k8s-nodes-metrics 'k8s-nodes "eltainer 0.2")
+
+(push '("Nodes" . k8s-nodes) k8s--resource-types)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Finalize resource type list (reverse so display order matches definition)

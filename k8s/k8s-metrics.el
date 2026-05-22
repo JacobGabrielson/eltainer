@@ -410,9 +410,11 @@ when NET-ENTRY itself is nil."
     (message "k8s metrics: %s/%s — g refreshes, q quits" ns pod-name)))
 
 ;;; ---------------------------------------------------------------------------
-;;; Node-level metrics view
-
-(declare-function k8s--ensure-connection "k8s")
+;;; Per-node metric collection
+;;
+;; The data collector; the cluster Nodes view that consumes it lives
+;; in k8s.el (`k8s-nodes' — a magit-section view alongside the other
+;; resource views).
 
 (defun k8s-metrics-collect-nodes (conn)
   "Return a list of per-node metric plists via CONN, or nil if unavailable.
@@ -445,93 +447,6 @@ usage fields are nil when the kubelet Summary API is unavailable."
                         :fs-total (and fs (cdr (assq 'capacityBytes fs))))
                   out)))
         (nreverse out)))))
-
-(defvar-local k8s-nodes--conn nil
-  "Connection for the current node-metrics buffer.")
-(defvar-local k8s-nodes--timer nil
-  "Repeating refresh timer for the current node-metrics buffer.")
-(defvar-local k8s-nodes--cm-history nil
-  "Hash NODE-NAME -> cpu/mem history, for the node trend sparklines.")
-
-(defun k8s-nodes--stop-timer ()
-  "Cancel the node-metrics buffer's refresh timer."
-  (when (timerp k8s-nodes--timer)
-    (cancel-timer k8s-nodes--timer))
-  (setq k8s-nodes--timer nil))
-
-(defvar-keymap k8s-nodes-metrics-mode-map
-  :parent special-mode-map
-  "g" #'k8s-nodes-metrics-refresh
-  "q" #'quit-window)
-
-(define-derived-mode k8s-nodes-metrics-mode special-mode "K8s:Nodes"
-  "Major mode for the cluster node-metrics view."
-  :group 'k8s-metrics
-  (setq-local truncate-lines t)
-  (add-hook 'kill-buffer-hook #'k8s-nodes--stop-timer nil t))
-
-(defun k8s-nodes-metrics-refresh ()
-  "Re-fetch and re-render the node-metrics buffer."
-  (interactive)
-  (unless (derived-mode-p 'k8s-nodes-metrics-mode)
-    (user-error "Not a k8s node-metrics buffer"))
-  (let* ((nodes (k8s-metrics-collect-nodes k8s-nodes--conn))
-         (inhibit-read-only t)
-         (pt (point)))
-    (unless k8s-nodes--cm-history
-      (setq k8s-nodes--cm-history (make-hash-table :test 'equal)))
-    (erase-buffer)
-    (insert (propertize "Cluster nodes" 'font-lock-face 'k8s-section-heading)
-            (propertize "   g refreshes, q quits\n\n" 'font-lock-face 'k8s-dim))
-    (if (null nodes)
-        (insert (propertize
-                 "  no nodes — API unreachable.\n" 'font-lock-face 'k8s-dim))
-      (dolist (n nodes)
-        (let* ((name (plist-get n :name))
-               (cm (k8s-metrics-cm-sample k8s-nodes--cm-history name
-                                          (plist-get n :cpu-used)
-                                          (plist-get n :mem-used))))
-          (insert (propertize (format "Node  %s\n" name)
-                              'font-lock-face 'k8s-resource-name))
-          (insert (eltainer-gauge-line "cpu" (plist-get n :cpu-used)
-                                     (plist-get n :cpu-total) 'alloc
-                                     #'k8s-metrics--human-cpu
-                                     (plist-get cm :cpu-hist)))
-          (insert (eltainer-gauge-line "mem" (plist-get n :mem-used)
-                                     (plist-get n :mem-total) 'alloc
-                                     #'eltainer-human-bytes
-                                     (plist-get cm :mem-hist)))
-          (insert (eltainer-gauge-line "fs" (plist-get n :fs-used)
-                                     (plist-get n :fs-total) 'capacity
-                                     #'eltainer-human-bytes))
-          (insert "\n"))))
-    (goto-char (min pt (point-max)))))
-
-(defun k8s-nodes--start-timer ()
-  "(Re)start the node-metrics buffer's refresh timer."
-  (k8s-nodes--stop-timer)
-  (let ((buf (current-buffer)))
-    (setq k8s-nodes--timer
-          (run-at-time k8s-metrics-refresh-interval
-                       k8s-metrics-refresh-interval
-                       (lambda ()
-                         (when (buffer-live-p buf)
-                           (with-current-buffer buf
-                             (k8s-nodes-metrics-refresh))))))))
-
-;;;###autoload
-(defun k8s-nodes-metrics ()
-  "Open the cluster node-metrics view (per-node CPU / memory / disk)."
-  (interactive)
-  (let ((buf (get-buffer-create "*k8s:metrics:nodes*"))
-        (conn (k8s--ensure-connection)))
-    (with-current-buffer buf
-      (k8s-nodes-metrics-mode)
-      (setq k8s-nodes--conn conn)
-      (k8s-nodes-metrics-refresh)
-      (k8s-nodes--start-timer))
-    (pop-to-buffer buf)
-    (message "k8s node metrics — g refreshes, q quits")))
 
 (provide 'k8s-metrics)
 ;;; k8s-metrics.el ends here

@@ -33,6 +33,7 @@
 (defconst eltainer-k8s-modules
   '("k8s-config"
     "k8s-api"
+    "k8s-prom"
     "k8s-metrics"
     "k8s-watch"
     "k8s-fs"

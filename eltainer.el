@@ -44,6 +44,7 @@
       ("i" "Ingresses"     k8s-ingresses)
       ("m" "ConfigMaps"    k8s-configmaps)
       ("x" "Secrets"       k8s-secrets)
+      ("o" "Nodes"         k8s-nodes)
       ("A" "Sandboxes"     k8s-sandboxes))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).")
 

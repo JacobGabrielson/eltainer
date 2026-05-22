@@ -103,8 +103,8 @@
               (sit-for 0.6)
               (demo--press "TAB" 0.6)          ; expand -> gauges + net spark
               (sit-for 10.0))
-            ;; --- Node metrics view ----------------------------------
-            (k8s-nodes-metrics)
+            ;; --- Nodes view -----------------------------------------
+            (k8s-nodes)
             (sit-for 5.0)))
         (kill-emacs 0))
     (error

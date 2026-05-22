@@ -235,6 +235,11 @@ CONTAINER specifies which container (required for multi-container pods)."
   "List all namespaces via CONN.  Returns a vector of namespace alists."
   (cdr (assq 'items (k8s-get conn "/api/v1/namespaces"))))
 
+(defun k8s-list-nodes (conn)
+  "List all cluster nodes via CONN.  Returns a vector of node alists.
+Nodes are cluster-scoped — there is no namespaced variant."
+  (cdr (assq 'items (k8s-get conn "/api/v1/nodes"))))
+
 (defun k8s-list-pods (conn &optional namespace)
   "List pods via CONN, optionally in NAMESPACE."
   (let ((path (if namespace

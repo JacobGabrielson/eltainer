@@ -84,5 +84,5 @@ limit 256 MiB) and the k8s pod `flux-box` (burst/idle cpu+mem+net).
 | 3 | Metrics buffer | ~5 s | `M' opens `*docker:metrics:eltainer-load*', the focused self-refreshing view. |
 | 4 | k8s pods | ~2 s | Back to the dashboard, `k' → `*k8s:pods*' on the kind cluster. |
 | 5 | Pod gauges | ~10 s | `TAB' on `flux-box'; CPU / memory / disk gauges with trend sparklines, plus the pod network rx/tx sparkline. |
-| 6 | Node metrics | ~5 s | `k8s-nodes-metrics' opens the cluster node view — per-node CPU / memory / filesystem gauges. |
+| 6 | Nodes view | ~5 s | `k8s-nodes' opens the cluster Nodes view — per-node roles / status / version with live CPU / memory / filesystem gauges. |
 | 7 | Quit | <1 s | `kill-emacs 0'. |

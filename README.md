@@ -50,6 +50,7 @@ transport, `docker-credential-*` helpers, and Kubernetes
 | Kubernetes | `j` / `J` | Jobs / CronJobs |
 | Kubernetes | `i` | Ingresses |
 | Kubernetes | `m` / `x` | ConfigMaps / Secrets |
+| Kubernetes | `o` | Nodes (roles, conditions, live perf gauges) |
 | Kubernetes | `A` | Sandboxes (agent-sandbox SIG — `agents.x-k8s.io`) |
 | — | `b` | Switch Kubernetes context (across all discovered kubeconfigs) |
 | — | `g` | Refresh dashboard |
@@ -119,8 +120,29 @@ CPU, memory and disk gauges (with trend sparklines), and the pod
 gets a network rx/tx sparkline — CPU/memory need metrics-server,
 disk/network need the kubelet stats API; each degrades gracefully if
 unavailable.  `M` opens a focused, self-refreshing metrics buffer
-for the pod; `?` → `o` (or `M-x k8s-nodes-metrics`) opens a
-cluster-wide per-node CPU/memory/disk view.
+for the pod.
+
+### The Nodes view
+
+`o` (on the dashboard, or `?` → `o` from any k8s view) opens the
+cluster Nodes view — every node with its roles, status, kubelet
+version and age.  `TAB` expands a node to its conditions (including
+the `MemoryPressure` / `DiskPressure` / `PIDPressure` flags),
+capacity vs. allocatable, scheduled-pod count, addresses, OS /
+kernel / container-runtime and taints.  Each node carries live
+CPU / memory / disk gauges (metrics-server + the kubelet stats API)
+and the buffer self-refreshes.
+
+When a Prometheus is reachable in the cluster, the Nodes view
+enriches each node with load averages (1m / 5m / 15m) and swaps the
+short in-buffer sparklines for real hour-long CPU / memory trends.
+eltainer queries Prometheus *through the Kubernetes API server's
+service proxy* — it reuses the existing authenticated connection,
+so there is no port-forward and no second set of credentials.  The
+Prometheus Service is auto-discovered; override it with
+`eltainer-prometheus-service` (`"namespace/name:port"`), or set
+that to `disabled` to switch the integration off.  With no
+Prometheus the view simply omits those rows.
 
 ### Switching contexts
 
@@ -162,9 +184,10 @@ docker/
 k8s/
   k8s-config.el          kubeconfig YAML parser (subset)
   k8s-api.el             REST client (thin wrapper over docker-http)
+  k8s-prom.el            Prometheus client via the API service proxy
   k8s-watch.el           Watch streams on docker-http-stream
   k8s-metrics.el         Usage gauges / sparklines: metrics.k8s.io +
-                         kubelet Summary API; per-pod + node views
+                         kubelet Summary API; per-pod + per-node data
   k8s-pods.el            Pods view: phases, restarts, streamed logs,
                          container subsections, inline metrics
   k8s-fs.el / k8s-fs-ui.el  Pod-fs browser
