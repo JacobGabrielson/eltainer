@@ -1,119 +1,138 @@
 #!/usr/bin/env bash
-# Record the eltainer `e' demo into docs/exec-demo.gif.
+# Record an eltainer demo into docs/<name>-demo.gif.
+#
+#   record-demo.sh [exec|metrics]      (default: exec)
+#
+#   exec     — dashboard, docker exec, context switch, pod logs,
+#              multi-container picker         -> docs/exec-demo.gif
+#   metrics  — docker + k8s resource gauges   -> docs/metrics-demo.gif
 #
 # Pipeline:
-#   1. asciinema rec --command "emacs -nw -Q -l demo-init.el" → .cast
+#   1. asciinema rec --command "emacs -nw -Q -l <name>-demo-init.el" -> .cast
 #   2. agg .cast .gif (asciinema's static GIF converter)
 #
-# Requires: asciinema, agg (`brew install agg`), emacs in a 100x30 TTY.
-#
-# Re-runnable; overwrites the previous cast/gif.
+# Requires: asciinema, agg, emacs in a 100x30 TTY.  Re-runnable.
 
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
-cast="$here/exec-demo.cast"
-gif="$here/exec-demo.gif"
+demo="${1:-exec}"
+case "$demo" in
+  exec)    init="$here/demo-init.el" ;;
+  metrics) init="$here/metrics-demo-init.el" ;;
+  *) echo "record-demo.sh: unknown demo '$demo' (exec|metrics)" >&2; exit 1 ;;
+esac
+cast="$here/${demo}-demo.cast"
+gif="$here/${demo}-demo.gif"
 
-# Make sure the docker sentinel container actually exists.
-if ! docker ps --format '{{.Names}}' | grep -qx eltainer-ticker; then
-  docker run -d --name eltainer-ticker alpine:3.20 \
-    sh -c 'i=0; while true; do echo "tick $i $(date)"; i=$((i+1)); sleep 5; done'
-fi
-
-# Make sure the k8s log-streaming pod exists in the kind cluster.
-# The demo `l'-pressing scene relies on it producing fresh log lines.
 KUBECONFIG=${KUBECONFIG:-$HOME/.kube/configs/config-kind}
 export KUBECONFIG
-if ! kubectl get pod log-ticker >/dev/null 2>&1; then
-  kubectl apply -f - <<'YAML' >/dev/null
+
+# --- sentinels -------------------------------------------------------------
+
+ensure_pod () {  # ensure_pod NAME <<<MANIFEST
+  if ! kubectl get pod "$1" >/dev/null 2>&1; then
+    kubectl apply -f - >/dev/null
+    kubectl wait --for=condition=Ready "pod/$1" --timeout=90s >/dev/null
+  fi
+}
+
+if [ "$demo" = exec ]; then
+  # Docker sentinel: a container echoing a tick line on a loop.
+  if ! docker ps --format '{{.Names}}' | grep -qx eltainer-ticker; then
+    docker run -d --name eltainer-ticker alpine:3.20 \
+      sh -c 'i=0; while true; do echo "tick $i $(date)"; i=$((i+1)); sleep 5; done'
+  fi
+  # k8s log-streaming pod for the `l' scene.
+  ensure_pod log-ticker <<'YAML'
 apiVersion: v1
 kind: Pod
-metadata:
-  name: log-ticker
+metadata: {name: log-ticker}
 spec:
   restartPolicy: Always
   containers:
   - name: ticker
     image: busybox:1.37
-    command:
-    - /bin/sh
-    - -c
-    - 'i=0; while true; do echo "tick $i $(date)"; i=$((i+1)); sleep 1; done'
+    command: ["/bin/sh","-c","i=0; while true; do echo \"tick $i $(date)\"; i=$((i+1)); sleep 1; done"]
 YAML
-  kubectl wait --for=condition=Ready pod/log-ticker --timeout=60s >/dev/null
-fi
-
-# Make sure the two-container pod exists — the `e' scene shows the
-# container picker choosing between its `app' and `sidecar' containers.
-# Both containers carry resource limits so the metrics gauges have a
-# denominator to draw a real bar against.
-if ! kubectl get pod duo-box >/dev/null 2>&1; then
-  kubectl apply -f - <<'YAML' >/dev/null
+  # Two-container pod for the `e' container-picker scene (with limits).
+  ensure_pod duo-box <<'YAML'
 apiVersion: v1
 kind: Pod
-metadata:
-  name: duo-box
+metadata: {name: duo-box}
 spec:
   restartPolicy: Always
   containers:
   - name: app
     image: alpine:3.20
-    command: ["/bin/sh", "-c", "echo app-container; sleep infinity"]
-    resources:
-      requests: {cpu: 50m, memory: 32Mi}
-      limits:   {cpu: 100m, memory: 64Mi}
+    command: ["/bin/sh","-c","echo app-container; sleep infinity"]
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {cpu: 100m, memory: 64Mi}}
   - name: sidecar
     image: busybox:1.37
-    command: ["/bin/sh", "-c", "echo sidecar-container; sleep infinity"]
-    resources:
-      requests: {cpu: 25m, memory: 16Mi}
-      limits:   {cpu: 50m, memory: 32Mi}
+    command: ["/bin/sh","-c","echo sidecar-container; sleep infinity"]
+    resources: {requests: {cpu: 25m, memory: 16Mi}, limits: {cpu: 50m, memory: 32Mi}}
 YAML
-  kubectl wait --for=condition=Ready pod/duo-box --timeout=60s >/dev/null
+fi
+
+if [ "$demo" = metrics ]; then
+  # Docker sentinel under steady load (~50% of a core, ~90 MiB) with a
+  # memory limit, so the container gauges show real fill.
+  if ! docker ps --format '{{.Names}}' | grep -qx eltainer-load; then
+    docker run -d --name eltainer-load --memory=256m python:3.12-alpine \
+      python3 -c 'import time
+d=bytearray(90*1024*1024)
+while True:
+    t=time.time()
+    while time.time()-t<0.05: sum(i*i for i in range(2000))
+    time.sleep(0.05)'
+  fi
+  # k8s sentinel with a burst/idle cpu+mem+network cycle.
+  ensure_pod flux-box <<'YAML'
+apiVersion: v1
+kind: Pod
+metadata: {name: flux-box}
+spec:
+  restartPolicy: Always
+  containers:
+  - name: flux
+    image: python:3.12-alpine
+    resources: {requests: {cpu: 200m, memory: 64Mi}, limits: {cpu: "1", memory: 256Mi}}
+    command:
+    - python3
+    - -c
+    - |
+      import time, subprocess, sys, ssl, urllib.request
+      ALLOC = "d = bytearray(110*1024*1024); import time; time.sleep(33)"
+      CTX = ssl._create_unverified_context()
+      URL = "https://kubernetes.default.svc.cluster.local/healthz"
+      while True:
+          child = subprocess.Popen([sys.executable, "-c", ALLOC])
+          end = time.time() + 30
+          while time.time() < end:
+              t = time.time()
+              while time.time() - t < 0.05:
+                  sum(i * i for i in range(2000))
+              try: urllib.request.urlopen(URL, timeout=2, context=CTX).read()
+              except Exception: pass
+          child.wait()
+          time.sleep(30)
+YAML
 fi
 
 rm -f "$cast" "$gif"
-
-# Emacs needs DOCKER_CLI_HINTS off so its child-process callers don't
-# spew "What's next" footers; eltainer itself doesn't invoke the CLI
-# in this demo, but better to be sure.
 export DOCKER_CLI_HINTS=false
 
-# asciinema needs a real TTY for its own stdin or it falls into
-# "headless" mode and never allocates a PTY for the child — emacs then
-# never gets a terminal to draw into.  `script' fabricates a PTY for us;
-# `stty rows … cols …' inside it sets the dimensions (asciinema's own
-# --cols/--rows flags only stamp the cast metadata, they don't resize
-# the PTY).
-#
-# BSD `script' (macOS) takes the typescript file as the first
-# positional and the command after; util-linux `script' (Linux) takes
-# the file last and the command via `-c'.  We detect at runtime.
+# asciinema needs a real TTY; `script' fabricates a PTY.  util-linux
+# `script' takes the file last + command via `-c'; BSD takes the file
+# first.  Detect at runtime.
+rec_cmd="stty rows 30 cols 100
+  export TERM=xterm-256color
+  asciinema rec --overwrite --cols 100 --rows 30 --idle-time-limit 1.5 \
+    --command \"TERM=xterm-256color emacs -nw -Q -l '$init'\" '$cast'"
 if script --help 2>&1 | grep -q -- '--command'; then
-  # util-linux
-  script -q -c "
-    stty rows 30 cols 100
-    export TERM=xterm-256color
-    asciinema rec \
-      --overwrite \
-      --cols 100 --rows 30 \
-      --idle-time-limit 1.5 \
-      --command \"TERM=xterm-256color emacs -nw -Q -l '$here/demo-init.el'\" \
-      '$cast'
-  " /dev/null
+  script -q -c "$rec_cmd" /dev/null
 else
-  # BSD
-  script -q /dev/null sh -c "
-    stty rows 30 cols 100
-    export TERM=xterm-256color
-    asciinema rec \
-      --overwrite \
-      --cols 100 --rows 30 \
-      --idle-time-limit 1.5 \
-      --command \"TERM=xterm-256color emacs -nw -Q -l '$here/demo-init.el'\" \
-      '$cast'
-  "
+  script -q /dev/null sh -c "$rec_cmd"
 fi
 
 agg \

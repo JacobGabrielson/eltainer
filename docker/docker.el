@@ -327,8 +327,12 @@ Filled by the stats poll timer; read while rendering container detail.")
 
 ;;; --- Container metrics polling --------------------------------------------
 ;;
-;; `/stats' is one call per container, so — like the k8s metrics timer
-;; — it polls on its own schedule, off the /events refresh hot path.
+;; `/containers/{id}/stats?stream=false' takes the daemon ~1.5s per
+;; call (it samples a window) — far too slow to poll every container.
+;; So polling is *lazy*: only containers whose section is expanded get
+;; stat'd.  A collapsed container's gauges aren't visible anyway, and
+;; with nothing expanded a tick costs nothing.  (A future improvement
+;; is the streaming `/stats' endpoint — non-blocking ~1Hz pushes.)
 
 (defun docker--metrics-stop ()
   "Stop the container-stats poll for the current buffer."
@@ -336,36 +340,44 @@ Filled by the stats poll timer; read while rendering container detail.")
     (cancel-timer docker--metrics-timer))
   (setq docker--metrics-timer nil))
 
+(defun docker--expanded-container-ids ()
+  "Return the ids of `container' sections currently expanded in this buffer."
+  (let (ids)
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((sec (get-text-property (point) 'magit-section)))
+          (when (and sec (eq (oref sec type) 'container)
+                     (not (oref sec hidden)))
+            (let ((c (oref sec value)))
+              (when (docker-container-p c)
+                (push (docker-container-id c) ids)))))
+        (forward-line 1)))
+    (delete-dups ids)))
+
 (defun docker--metrics-tick (buf)
-  "Poll `/stats' for every running container in BUF, then re-render."
+  "Poll `/stats' for the expanded containers in BUF, then re-render."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (derived-mode-p 'docker-containers-mode)
         (condition-case err
-            (let* ((cfg (docker--ensure-config))
-                   (running (cl-remove-if-not
-                             (lambda (c)
-                               (equal (docker-container-state c) "running"))
-                             (append (docker-list-containers cfg) nil))))
-              (unless docker--metrics
-                (setq docker--metrics (make-hash-table :test 'equal)))
-              (unless docker--host-mem
-                (let ((info (docker-host-info cfg)))
-                  (setq docker--host-mem
-                        (and info (cdr (assq 'MemTotal info))))))
-              (if (> (length running) docker-metrics-max-containers)
-                  (message "docker metrics: %d running over the %d cap — \
-poll skipped"
-                           (length running) docker-metrics-max-containers)
-                (let ((now (float-time)))
-                  (dolist (c running)
-                    (let ((stats (docker-container-stats
-                                  cfg (docker-container-id c))))
-                      (when stats
-                        (docker-metrics-sample docker--metrics
-                                               (docker-container-id c)
-                                               stats docker--host-mem now)))))
-                (revert-buffer nil t)))
+            (let ((ids (docker--expanded-container-ids)))
+              (when (and ids
+                         (<= (length ids) docker-metrics-max-containers))
+                (let ((cfg (docker--ensure-config)))
+                  (unless docker--metrics
+                    (setq docker--metrics (make-hash-table :test 'equal)))
+                  (unless docker--host-mem
+                    (let ((info (docker-host-info cfg)))
+                      (setq docker--host-mem
+                            (and info (cdr (assq 'MemTotal info))))))
+                  (let ((now (float-time)))
+                    (dolist (id ids)
+                      (let ((stats (docker-container-stats cfg id)))
+                        (when stats
+                          (docker-metrics-sample docker--metrics id
+                                                 stats docker--host-mem now)))))
+                  (revert-buffer nil t))))
           (error
            (message "docker metrics: %s" (error-message-string err))))))))
 

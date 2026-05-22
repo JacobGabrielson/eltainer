@@ -84,6 +84,11 @@ and network throughput sparklines, and the PID count — polled from
 `/containers/{id}/stats`.  `M` opens a focused, self-refreshing
 metrics buffer for the container.
 
+![docker + k8s resource metrics](docs/metrics-demo.gif)
+
+*The metrics gauges in action across both backends — see
+[docs/DEMO.md](docs/DEMO.md).*
+
 ### Inside the k8s view
 
 | Key | Action |

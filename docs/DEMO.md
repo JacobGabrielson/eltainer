@@ -1,5 +1,12 @@
 # Demo storyboard
 
+There are two recorded demos:
+
+| Demo | GIF | Init file | Record with |
+|------|-----|-----------|-------------|
+| exec | `docs/exec-demo.gif` | `docs/demo-init.el` | `record-demo.sh` *(or `… exec`)* |
+| metrics | `docs/metrics-demo.gif` | `docs/metrics-demo-init.el` | `record-demo.sh metrics` |
+
 This file is the **plain-English script** for `docs/exec-demo.gif`.
 The implementation lives in `docs/demo-init.el` and is re-recorded by
 `docs/record-demo.sh`.
@@ -58,3 +65,24 @@ a corresponding function in `demo-init.el`:
 - `i` describe-resource on a k8s row.
 - Image-pull progress (`u`) with a layered pull.
 - `f` for the read-only pod filesystem browser.
+
+## Metrics demo
+
+`docs/metrics-demo.gif` — driven by `docs/metrics-demo-init.el`,
+recorded with `record-demo.sh metrics`.  It tours the resource-usage
+gauges; the demo Emacs polls metrics every 3s (vs the 15s default) so
+the bars populate within the recording.
+
+Off-camera, `record-demo.sh metrics` creates two load sentinels: the
+docker container `eltainer-load` (steady ~½-core + ~90 MiB, memory
+limit 256 MiB) and the k8s pod `flux-box` (burst/idle cpu+mem+net).
+
+| # | Beat | Linger | What the viewer sees |
+|---|------|--------|----------------------|
+| 1 | Dashboard → containers | ~3 s | `M-x eltainer', then `c'. |
+| 2 | Container gauges | ~9 s | `TAB' on `eltainer-load' expands it; CPU / memory / network gauge lines fill in as the stats poll lands (lazy — only the expanded container is polled). |
+| 3 | Metrics buffer | ~5 s | `M' opens `*docker:metrics:eltainer-load*', the focused self-refreshing view. |
+| 4 | k8s pods | ~2 s | Back to the dashboard, `k' → `*k8s:pods*' on the kind cluster. |
+| 5 | Pod gauges | ~10 s | `TAB' on `flux-box'; CPU / memory / disk gauges with trend sparklines, plus the pod network rx/tx sparkline. |
+| 6 | Node metrics | ~5 s | `k8s-nodes-metrics' opens the cluster node view — per-node CPU / memory / filesystem gauges. |
+| 7 | Quit | <1 s | `kill-emacs 0'. |

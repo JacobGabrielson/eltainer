@@ -107,23 +107,28 @@ Mirror the k8s side:
 ## 6. Polling strategy — the one-call-per-container problem
 
 k8s gets every pod's metrics in a single call; Docker needs one
-`/stats` call per container.  Approach:
+`/stats` call per container — and crucially, `?stream=false` is
+**not** cheap: the daemon samples a window, so each call takes
+~1.5 s.  Polling every container would freeze Emacs for seconds.
 
-- Poll one-shot (`?stream=false`) for **running** containers only, on
-  a timer (`docker-metrics-refresh-interval`, default 15s) — off the
-  `/events` hot path, exactly like the k8s metrics timer.
-- The `docker-http` transport is synchronous, so the calls are
-  sequential.  On a local socket each is a few ms; ~tens of
-  containers ⇒ well under a second per poll.  Acceptable.
-- Guard huge hosts with `docker-metrics-max-containers` (default 40):
-  beyond that, skip the poll and show a note rather than hammering
-  the daemon.
-- Cache results buffer-locally keyed by container id; the view
-  render reads the cache, the timer refills it — same shape as
-  `k8s--metrics-cache` + `k8s--net-history`.
-- Streaming a persistent `/stats` per container was considered and
-  rejected for phase 1: N long-lived connections, more moving parts,
-  no real benefit at a 15s cadence.
+What shipped — **lazy polling**:
+
+- A tick stats only the containers whose section is currently
+  *expanded* (`docker--expanded-container-ids`).  A collapsed
+  container's gauges aren't visible anyway, so there's nothing to
+  pay for; with nothing expanded a tick costs nothing.
+- Timer cadence `docker-metrics-refresh-interval` (default 15s), off
+  the `/events` hot path.  Capped by `docker-metrics-max-containers`.
+- Cache buffer-local keyed by container id; the render reads it, the
+  timer refills it — same shape as the k8s caches.
+- A freshly-expanded container shows its gauges within one interval
+  (the next tick picks it up).
+
+Future: the **streaming** `/stats` endpoint (drop `?stream=false`)
+pushes a fresh sample ~1 Hz over a persistent connection, consumed
+in a process filter like `/events` — non-blocking, and CPU% comes
+free frame-to-frame.  The cost is N persistent connections; worth it
+once the lazy approach's per-expand latency becomes annoying.
 
 ## 7. New / changed files
 
