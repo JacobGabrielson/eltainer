@@ -331,5 +331,95 @@ then wires each view entry's KEY to its COMMAND."
       (eltainer-refresh))
     (pop-to-buffer buf)))
 
+;;; ---------------------------------------------------------------------------
+;;; Stop-all: a panic button for runaway watching
+;;
+;; Eltainer's per-buffer kill-hooks already cancel each view's timers
+;; and tear down its streams.  This command leans on that — it kills
+;; the buffers en masse — and adds a final pass for the few things
+;; that live outside any buffer: the global Docker /events stream and
+;; any orphan eltainer-owned timer the kill-hooks didn't catch.
+
+(defconst eltainer-stop--buffer-rx
+  "\\`\\*\\(docker\\|k8s\\|eltainer\\):"
+  "Buffer-name regexp matching eltainer-owned buffers.")
+
+(defconst eltainer-stop--exec-rx
+  "\\`\\*\\(docker\\|k8s\\):exec:"
+  "Buffer-name regexp for live exec TTY buffers — spared by default.
+Killing them drops a live shell.")
+
+(defconst eltainer-stop--timer-functions
+  '(docker--metrics-tick
+    k8s--metrics-tick
+    k8s--nodes-tick
+    k8s-watch--do-reconnect)
+  "Timer-callback symbols swept by `eltainer-stop-all'.
+Anonymous-lambda timers stay out of this list — they are either
+buffer-local (cancelled by the buffer's kill-hook) or reachable
+from `docker-events--subscribers' (cancelled by `docker-events-stop').")
+
+(defun eltainer-stop--buffers (include-exec)
+  "Return live eltainer buffers; with INCLUDE-EXEC nil, skip exec TTYs."
+  (seq-filter
+   (lambda (b)
+     (let ((n (buffer-name b)))
+       (and n
+            (string-match-p eltainer-stop--buffer-rx n)
+            (or include-exec
+                (not (string-match-p eltainer-stop--exec-rx n))))))
+   (buffer-list)))
+
+(defun eltainer-stop--sweep-timers ()
+  "Cancel any timer whose function is in `eltainer-stop--timer-functions'.
+Returns the count cancelled."
+  (let ((n 0))
+    (dolist (timer (append timer-list timer-idle-list))
+      (when (memq (timer--function timer) eltainer-stop--timer-functions)
+        (cancel-timer timer)
+        (cl-incf n)))
+    n))
+
+(declare-function docker-events-stop      "docker-events")
+(declare-function docker-events--running-p "docker-events")
+
+;;;###autoload
+(defun eltainer-stop-all (&optional include-exec)
+  "Shut down every eltainer watcher.
+Kills the `*docker:*' / `*k8s:*' / `*eltainer:*' buffers (their
+kill-hooks already cancel buffer-local timers and close streams),
+stops the global Docker /events stream, and sweeps for any
+remaining eltainer-owned timer.
+
+By default leaves `*docker:exec:*' / `*k8s:exec:*' TTY buffers
+alone — killing them drops a live shell.  With a prefix arg
+INCLUDE-EXEC, kill those too."
+  (interactive "P")
+  (let* ((bufs (eltainer-stop--buffers include-exec))
+         (events-live (and (fboundp 'docker-events--running-p)
+                           (docker-events--running-p))))
+    (cond
+     ((not (or bufs events-live))
+      (message "eltainer: nothing to stop"))
+     ((not (yes-or-no-p
+            (format "Stop all eltainer activity (%d buffer%s%s)? "
+                    (length bufs)
+                    (if (= 1 (length bufs)) "" "s")
+                    (if events-live ", + Docker /events stream" ""))))
+      (message "eltainer: stop cancelled"))
+     (t
+      (dolist (b bufs) (ignore-errors (kill-buffer b)))
+      (when (fboundp 'docker-events-stop)
+        (docker-events-stop))
+      (let ((swept (eltainer-stop--sweep-timers)))
+        (message "eltainer: stopped %d buffer%s%s%s"
+                 (length bufs)
+                 (if (= 1 (length bufs)) "" "s")
+                 (if events-live ", killed /events stream" "")
+                 (if (> swept 0)
+                     (format ", swept %d orphan timer%s"
+                             swept (if (= 1 swept) "" "s"))
+                   "")))))))
+
 (provide 'eltainer)
 ;;; eltainer.el ends here

@@ -120,8 +120,14 @@ MATCH-FN takes the parsed event alist and returns non-nil to fire."
   (docker-events--ensure-stream cfg))
 
 (defun docker-events-stop ()
-  "Tear down the active /events stream and forget all subscribers."
+  "Tear down the active /events stream and forget all subscribers.
+Also cancels each subscriber's pending debounce timer; otherwise
+those would fire once after the subscribers list was cleared,
+hit the (now nil) state, and silently no-op."
   (interactive)
+  (dolist (sub docker-events--subscribers)
+    (let ((timer (nth 4 sub)))
+      (when (timerp timer) (cancel-timer timer))))
   (when (process-live-p docker-events--process)
     (delete-process docker-events--process))
   (setq docker-events--process nil

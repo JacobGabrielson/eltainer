@@ -30,8 +30,12 @@
   "Resource-usage gauges for the eltainer Docker views."
   :group 'docker)
 
-(defcustom docker-metrics-refresh-interval 15
-  "Seconds between container-stats polls while a containers buffer is open."
+(defcustom docker-metrics-refresh-interval 30
+  "Seconds between container-stats polls while a containers buffer is open.
+Each `/stats?stream=false' call samples a ~1s window on the daemon
+side, so polling fast costs both eltainer and the daemon real
+work; the default is relaxed to keep background traffic modest.
+Lower it if you want gauges that move more visibly."
   :type 'integer
   :group 'docker-metrics)
 

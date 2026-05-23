@@ -154,6 +154,20 @@ flips immediately: any open `*k8s:…*` buffers are killed so they
 re-open against the new context the next time you visit them.
 Same muscle memory as `b` in magit for branches.
 
+### Stopping everything
+
+`M-x eltainer-stop-all` is the panic button.  It kills every
+`*docker:*` / `*k8s:*` / `*eltainer:*` buffer (each one's
+kill-hooks cancel its timers and close its streams), tears down
+the global Docker `/events` stream, and sweeps any orphan
+eltainer-owned timer the kill-hooks didn't catch.  Live exec TTY
+buffers are left alone by default — killing them drops a shell;
+pass a prefix arg (`C-u M-x eltainer-stop-all`) to include those
+too.
+
+Metrics polling defaults to once every 30 seconds — tune via
+`docker-metrics-refresh-interval` and `k8s-metrics-refresh-interval`.
+
 ## Architecture
 
 ```

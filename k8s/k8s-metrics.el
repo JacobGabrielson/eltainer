@@ -22,10 +22,12 @@
   "Resource-usage gauges for the eltainer Kubernetes views."
   :group 'k8s)
 
-(defcustom k8s-metrics-refresh-interval 15
-  "Seconds between metrics polls while a pods buffer is open.
-metrics-server itself only scrapes every ~15s, so polling faster
-buys nothing."
+(defcustom k8s-metrics-refresh-interval 30
+  "Seconds between metrics polls while a k8s view is open.
+Used by the pods, nodes and focused pod-metrics buffers.
+metrics-server itself only scrapes every ~15s, so going below 15
+buys nothing; the default is relaxed to keep background traffic
+modest.  Lower it if you want gauges that move more visibly."
   :type 'integer
   :group 'k8s-metrics)
 
