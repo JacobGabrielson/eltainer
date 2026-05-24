@@ -193,11 +193,21 @@ before being handed off."
         (ignore-errors (funcall splitter 'cleanup))))))
 
 (defun k8s-multilog--insert-line (prefix face line)
-  "Insert one tail line at point-max, autoscrolling if point is there.
+  "Insert one tail line at point-max, autoscrolling if at the tail.
 PREFIX is the padded `[ns/pod]' tag; FACE colours it; LINE is the
-log line body (already UTF-8 decoded)."
-  (let ((inhibit-read-only t)
-        (at-end (= (point) (point-max))))
+log line body (already UTF-8 decoded).
+
+Auto-follow checks both the buffer's point *and* the showing
+windows' points — a user who hits `M->' in the window expects
+the tail to keep following even if buffer-point hadn't been
+moved yet."
+  (let* ((inhibit-read-only t)
+         (buf (current-buffer))
+         (windows (get-buffer-window-list buf nil t))
+         (was-at-end (or (= (point) (point-max))
+                         (cl-some (lambda (w)
+                                    (= (window-point w) (point-max)))
+                                  windows))))
     (save-excursion
       (goto-char (point-max))
       (let ((body-beg (progn
@@ -206,7 +216,9 @@ log line body (already UTF-8 decoded)."
                         (point))))
         (insert line "\n")
         (ansi-color-apply-on-region body-beg (1- (point)))))
-    (when at-end (goto-char (point-max)))))
+    (when was-at-end
+      (goto-char (point-max))
+      (dolist (w windows) (set-window-point w (point-max))))))
 
 (defun k8s-multilog--append-line (prefix face line)
   "Render or queue a line based on the pause state."
@@ -281,6 +293,7 @@ Computes the shared prefix-width so the column stays aligned."
   (let ((inhibit-read-only t)) (erase-buffer))
   (k8s-multilog--write-header)
   (k8s-multilog--start-all-streams)
+  (k8s-multilog--goto-tail)
   (message "k8s multilog: restarted (%d pod%s)"
            (length k8s-multilog--pods)
            (if (= 1 (length k8s-multilog--pods)) "" "s")))
@@ -291,7 +304,18 @@ Computes the shared prefix-width so the column stays aligned."
   (let ((inhibit-read-only t))
     (erase-buffer)
     (insert (propertize "[cleared — streams still running]\n"
-                        'font-lock-face 'shadow))))
+                        'font-lock-face 'shadow)))
+  (k8s-multilog--goto-tail))
+
+(defun k8s-multilog--goto-tail ()
+  "Position point + every showing window at the buffer's tail.
+The per-line inserter only auto-scrolls when point is already at
+point-max, so a fresh buffer would otherwise stay parked on the
+header and the user would have to `M->' to see anything land."
+  (let ((buf (current-buffer)))
+    (goto-char (point-max))
+    (dolist (win (get-buffer-window-list buf nil t))
+      (set-window-point win (point-max)))))
 
 (defun k8s-multilog-pause-toggle ()
   "Pause or resume rendering.  Output is queued while paused."
@@ -371,8 +395,10 @@ NAME the workload's resource name."
                   k8s-multilog--paused-queue nil)
             (let ((inhibit-read-only t)) (erase-buffer))
             (k8s-multilog--write-header)
-            (k8s-multilog--start-all-streams))
+            (k8s-multilog--start-all-streams)
+            (goto-char (point-max)))     ; park at tail so auto-scroll engages
           (pop-to-buffer buf)
+          (with-current-buffer buf (k8s-multilog--goto-tail))
           (message "k8s multilog: tailing %d pod%s — g restart, p pause, c clear, q quit"
                    (length pods) (if (= 1 (length pods)) "" "s")))))))
 
