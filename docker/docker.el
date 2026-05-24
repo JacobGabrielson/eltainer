@@ -217,6 +217,11 @@ section."
 ;; Metrics state — declared here so `docker--container-insert-line'
 ;; reads `docker--metrics' without a free-variable warning; the poll
 ;; machinery that maintains it is below `docker-containers-mode'.
+(defvar-local docker--live-container-ids nil
+  "Buffer-local hash CONTAINER-ID -> t for containers in the latest
+`docker--containers-refresh' fetch.  Drives the metrics-cache reaper
+in `docker--metrics-tick' so stale entries — containers removed from
+the daemon between refreshes — don't accumulate over long sessions.")
 (defvar-local docker--metrics nil
   "Hash CONTAINER-ID -> metrics render plist (see `docker-metrics-sample').
 Filled by the stats poll timer; read while rendering container detail.")
@@ -260,13 +265,18 @@ Filled by the stats poll timer; read while rendering container detail.")
   "When non-nil, the containers view includes stopped containers.")
 
 (defun docker--containers-refresh ()
-  "Refresh the containers buffer using the buffer-local `--show-all' flag."
+  "Refresh the containers buffer using the buffer-local `--show-all' flag.
+Side-effect: refreshes `docker--live-container-ids' so the metrics
+tick can reap entries for containers no longer on the daemon."
   (let* ((cfg (docker--ensure-config))
          (items (docker-list-containers cfg :all docker-containers--show-all))
          (hdr (format "  %-30s %-10s %-10s %-12s %-6s\n"
                       "NAME" "STATE" "IMAGE" "PORTS" "AGE"))
          (label (if docker-containers--show-all
                     "Containers (all)" "Containers (running)")))
+    (setq docker--live-container-ids (make-hash-table :test 'equal))
+    (seq-doseq (c items)
+      (puthash (docker-container-id c) t docker--live-container-ids))
     (docker--generic-refresh label items hdr #'docker--container-insert-line)))
 
 (defun docker-containers-toggle-all ()
@@ -379,13 +389,28 @@ Filled by the stats poll timer; read while rendering container detail.")
                                (setq docker--metrics-render-timer nil)
                                (revert-buffer nil t)))))))))
 
+(defun docker--reap-dead-metrics ()
+  "Drop `docker--metrics' entries for containers no longer on the daemon.
+Keyed off `docker--live-container-ids' from the last refresh — a noop
+when the live-set hasn't been built yet, harmless when the metrics
+hash is empty.  Called at the top of `docker--metrics-tick'."
+  (when (and (hash-table-p docker--metrics)
+             (hash-table-p docker--live-container-ids))
+    (let (dead)
+      (maphash (lambda (cid _v)
+                 (unless (gethash cid docker--live-container-ids)
+                   (push cid dead)))
+               docker--metrics)
+      (dolist (cid dead) (remhash cid docker--metrics)))))
+
 (defun docker--metrics-tick (buf)
   "Fire async `/stats' fetches for the expanded containers in BUF.
-Returns immediately; each response updates the cache and schedules a
-debounced re-render."
+Reaps the metrics cache first, then returns immediately; each
+response updates the cache and schedules a debounced re-render."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (when (derived-mode-p 'docker-containers-mode)
+        (docker--reap-dead-metrics)
         (condition-case err
             (let ((ids (docker--expanded-container-ids)))
               (when (and ids
