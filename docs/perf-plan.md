@@ -1,8 +1,43 @@
 # Plan: performance improvements
 
-Status: **proposal** — review before coding.  Findings from a
-codebase-wide audit (every `.el` file in `docker/`, `k8s/`, and the
-top-level shared modules) of CPU, memory, and caching opportunities.
+Status: **shipped** — every tier landed in the commits below.
+
+| Tier   | Item                                      | Commit    |
+|--------|-------------------------------------------|-----------|
+| 1.1–1.3 + 3.8 | parallel summary / nodes / networks / Prom + Prom matcher pre-hash | `c9bec22` |
+| 1.4    | stream-filter scratch buffers (O(n²) → O(n))      | `7dbccbf` |
+| 2.5    | kubeconfig memoization (parse + discovery)        | `e1986af` |
+| 2.6    | HTTP/1.1 keep-alive connection pool               | `23b7779` |
+| 2.7    | Prom discovery audit (`k8s-prom-reset` docstring hint) | `ffdd4c6` |
+| 3.9    | incremental section tracking                      | `5bd79d7` |
+| 3.10   | reap dead-container metrics                       | `b90af2e` |
+| 3.11   | hash-index K8s API path alists                    | `09c80da` |
+| 3.12   | per-pod container hash for the render hot path    | `986ead6` |
+| Tier 4 | regex precompile, `seq-find`, `append-vec` sweep, k8s-fs incremental parse | `cee0983` |
+
+Measured wins on `microk8s` + a local Docker daemon:
+
+- Nodes-view refresh: 4 sequential round-trips → 1 parallel batch.
+  Drops from seconds of blocking to ~one RTT (~0.5–0.8 s on the
+  test cluster).
+- Sync TLS-request bursts: **2.1× faster** with the keep-alive pool
+  (308 ms vs. 643 ms for 5 sequential `list-pods` calls).
+- Kubeconfig discovery on dashboard `g`: **~3.3× faster** on cache
+  hit (43 ms → 13 ms for 100 calls).
+- Per-refresh full-buffer walk in `k8s--save-point-context` gone —
+  now an O(1) hash maintained incrementally via `:after` advice
+  on `magit-section-show` / `-hide`.
+- Stream filters (`docker-stream-make-{ndjson,demux}`, the sync HTTP
+  accumulator) no longer quadratic on long streams.
+
+The remainder of the original audit is captured here for reference;
+each item links to the commit that closed it.
+
+---
+
+Findings from a codebase-wide audit (every `.el` file in `docker/`,
+`k8s/`, and the top-level shared modules) of CPU, memory, and
+caching opportunities.
 
 The recurring themes are four:
 
