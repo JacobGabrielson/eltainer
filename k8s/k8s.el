@@ -595,31 +595,13 @@ k8s-themed heading face."
 
 ;;; ---------------------------------------------------------------------------
 ;;; Shared keymap fragment
-
-(defvar-keymap k8s-common-map
-  "RET" #'k8s-dwim-ret
-  "d" #'k8s-delete-at-point
-  "i" #'k8s-describe
-  "w" #'k8s-watch-toggle
-  "N" #'k8s-set-namespace
-  "b" #'eltainer-switch-kubeconfig
-  "?" #'k8s-dispatch
-  "g" #'revert-buffer
-  "q" #'quit-window
-  ;; dired-style marks (see k8s-marks.el)
-  "m"     #'k8s-mark
-  "u"     #'k8s-unmark
-  "U"     #'k8s-unmark-all
-  "t"     #'k8s-toggle-marks
-  "DEL"   #'k8s-unmark-backward
-  ;; Dired also accepts these for "unmark all".  In dired the
-  ;; distinction is between "remove every mark" (`U' / `* !') and
-  ;; "remove all marks of a specific character" (`M-DEL' / `* ?',
-  ;; which prompts).  eltainer only has one mark character, so all
-  ;; four collapse to the same action.
-  "M-DEL" #'k8s-unmark-all
-  "* !"   #'k8s-unmark-all
-  "* ?"   #'k8s-unmark-all)
+;;
+;; `k8s-common-map' itself is defined in k8s-marks.el (which loads
+;; before any view file) so per-view maps can inherit it via
+;; `:parent k8s-common-map' without a load-order dance.  Adding the
+;; view-specific bindings on top of common-map happens via straight
+;; key binds — no copy step — so changes to common-map propagate
+;; automatically across `eltainer-reload'.
 
 ;; `eltainer-switch-kubeconfig' lives in the top-level eltainer.el so
 ;; both the dashboard and the k8s views can call it.  Autoload so we
@@ -795,11 +777,11 @@ LINE-FN inserts one item."
          ,(format "Refresh the %s buffer." namestr)
          (k8s--generic-refresh ,display ,api-fn ,column-header ,line-fn))
 
-       (defvar-keymap ,mode-map
-         :parent magit-section-mode-map)
-       (map-keymap (lambda (key def)
-                     (keymap-set ,mode-map (key-description (vector key)) def))
-                   k8s-common-map)
+       ;; Plain defvar (not defvar-keymap) so the parent link
+       ;; re-installs idempotently on every `eltainer-reload'.
+       (defvar ,mode-map (make-sparse-keymap)
+         ,(format "Keymap for `k8s-%s-mode'." namestr))
+       (set-keymap-parent ,mode-map k8s-common-map)
 
        (define-derived-mode ,mode-fn magit-section-mode
          ,(format "K8s:%s" (capitalize namestr))
@@ -1757,11 +1739,9 @@ seconds of UI-blocking to one round-trip's worth."
       (magit-section-show magit-root-section))
     (k8s--restore-point-context ctx)))
 
-(defvar-keymap k8s-nodes-mode-map
-  :parent magit-section-mode-map)
-(map-keymap (lambda (key def)
-              (keymap-set k8s-nodes-mode-map (key-description (vector key)) def))
-            k8s-common-map)
+(defvar k8s-nodes-mode-map (make-sparse-keymap)
+  "Keymap for `k8s-nodes-mode'.")
+(set-keymap-parent k8s-nodes-mode-map k8s-common-map)
 
 (defun k8s--nodes-stop-timer ()
   "Cancel the nodes buffer's refresh timer."

@@ -180,5 +180,67 @@ Mirrors `dired-toggle-marks'."
                   (k8s--mark-id id))))))
         (forward-line 1)))))
 
+;;; ---------------------------------------------------------------------------
+;;; Shared keymap fragment for k8s views
+;;
+;; `k8s-common-map' carries every binding the view modes share —
+;; navigation, describe / delete / watch / namespace, the dispatch
+;; transient, and the dired-style marks above.  It used to live in
+;; k8s.el, but k8s-pods.el loads before k8s.el; copying common-map's
+;; bindings into `k8s-pods-mode-map' at load time picked up an
+;; old (pre-reload) snapshot.  Defining it here — in a module loaded
+;; before any view file — lets per-view maps inherit via :parent
+;; rather than copy, so a reload that adds bindings to common-map
+;; takes effect everywhere immediately.
+;;
+;; Several entries reference commands defined in k8s.el (k8s-dispatch,
+;; k8s-describe, etc.).  Keymap entries store symbols and resolve at
+;; key-press time, so those forward references are fine.
+
+(declare-function k8s-dwim-ret             "k8s")
+(declare-function k8s-delete-at-point      "k8s")
+(declare-function k8s-describe             "k8s")
+(declare-function k8s-watch-toggle         "k8s")
+(declare-function k8s-set-namespace        "k8s")
+(declare-function eltainer-switch-kubeconfig "eltainer")
+(declare-function k8s-dispatch             "k8s")
+
+;; IMPORTANT: don't use `defvar-keymap' here — it's a one-shot
+;; `defvar' that no-ops on re-eval, so a reload that adds keys to
+;; common-map would never see them on the existing keymap object.
+;; Plain `defvar' + idempotent `keymap-set' calls (which re-run on
+;; every load) is the reload-safe pattern.
+(defvar k8s-common-map (make-sparse-keymap)
+  "Bindings shared by every k8s view mode (pods, nodes, deployments, …).
+Each view's mode-map sets this as its `:parent', so editing the
+list below and reloading propagates automatically — no copy step,
+no load-order surprise.")
+
+(set-keymap-parent k8s-common-map magit-section-mode-map)
+
+(pcase-dolist
+    (`(,key ,cmd)
+     '(("RET"   k8s-dwim-ret)
+       ("d"     k8s-delete-at-point)
+       ("i"     k8s-describe)
+       ("w"     k8s-watch-toggle)
+       ("N"     k8s-set-namespace)
+       ("b"     eltainer-switch-kubeconfig)
+       ("?"     k8s-dispatch)
+       ("g"     revert-buffer)
+       ("q"     quit-window)
+       ;; dired-style marks
+       ("m"     k8s-mark)
+       ("u"     k8s-unmark)
+       ("U"     k8s-unmark-all)
+       ("t"     k8s-toggle-marks)
+       ("DEL"   k8s-unmark-backward)
+       ;; Dired also accepts `M-DEL', `* !', `* ?' for "unmark all";
+       ;; we only have one mark character so they collapse together.
+       ("M-DEL" k8s-unmark-all)
+       ("* !"   k8s-unmark-all)
+       ("* ?"   k8s-unmark-all)))
+  (keymap-set k8s-common-map key cmd))
+
 (provide 'k8s-marks)
 ;;; k8s-marks.el ends here

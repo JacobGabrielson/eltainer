@@ -629,19 +629,21 @@ covers every container in the pod either way."
 ;;; ---------------------------------------------------------------------------
 ;;; Major mode
 
-(defvar-keymap k8s-pods-mode-map
-  :parent magit-section-mode-map)
-
-;; Pull in shared k8s view keys (RET, d, i, w, N, b context switch, ?, g, q)
-;; first, then add pod-specific keys on top so locals can override common.
-(map-keymap (lambda (key def)
-              (keymap-set k8s-pods-mode-map (key-description (vector key)) def))
-            k8s-common-map)
-(keymap-set k8s-pods-mode-map "l" #'k8s-pod-view-logs)
-(keymap-set k8s-pods-mode-map "e" #'k8s-pod-exec-at-point)
-(keymap-set k8s-pods-mode-map "f" #'k8s-pod-browse-at-point)
-(keymap-set k8s-pods-mode-map "M" #'k8s-pod-metrics-at-point)
-(keymap-set k8s-pods-mode-map "L" #'k8s-pods-multilog-marked)
+;; Inherit shared k8s view keys via :parent (`k8s-common-map' is
+;; defined in k8s-marks.el, which loads before any view file);
+;; pod-specific keys layered on top.  Plain `defvar' rather than
+;; `defvar-keymap' so the bindings below — and the parent link —
+;; re-install idempotently on every `eltainer-reload'.
+(defvar k8s-pods-mode-map (make-sparse-keymap)
+  "Keymap for `k8s-pods-mode'.")
+(set-keymap-parent k8s-pods-mode-map k8s-common-map)
+(pcase-dolist (`(,k ,cmd)
+               '(("l" k8s-pod-view-logs)
+                 ("e" k8s-pod-exec-at-point)
+                 ("f" k8s-pod-browse-at-point)
+                 ("M" k8s-pod-metrics-at-point)
+                 ("L" k8s-pods-multilog-marked)))
+  (keymap-set k8s-pods-mode-map k cmd))
 
 (define-derived-mode k8s-pods-mode magit-section-mode "K8s:Pods"
   "Major mode for viewing Kubernetes pods.
