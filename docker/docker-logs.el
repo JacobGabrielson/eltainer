@@ -8,6 +8,7 @@
 ;; container's `Config.Tty' and skip the demuxer.
 
 (require 'cl-lib)
+(require 'ansi-color)
 (require 'docker-api)
 (require 'docker-http)
 (require 'docker-stream)
@@ -65,7 +66,12 @@
     (delete-process docker-logs--process)))
 
 (defun docker-logs--insert (buffer stream-type bytes)
-  "Insert BYTES into BUFFER, colorized by STREAM-TYPE (`stdout'/`stderr')."
+  "Insert BYTES into BUFFER, colorized by STREAM-TYPE (`stdout'/`stderr').
+ANSI colour escapes embedded in BYTES are translated to text
+properties via `ansi-color-apply-on-region' (stateful across
+chunk boundaries) so the ^[[…m junk doesn't leak through.  The
+stdout/stderr base face is applied as the `default' face for the
+inserted region; ANSI faces compose on top for their spans."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
@@ -75,7 +81,9 @@
                     (_ 'docker-logs-stdout))))
         (save-excursion
           (goto-char (point-max))
-          (insert (propertize bytes 'font-lock-face face)))
+          (let ((beg (point)))
+            (insert (propertize bytes 'font-lock-face face))
+            (ansi-color-apply-on-region beg (point))))
         (when at-end (goto-char (point-max)))))))
 
 (defun docker-logs--tty-p (cfg container)

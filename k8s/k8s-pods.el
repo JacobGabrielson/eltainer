@@ -7,6 +7,7 @@
 ;;   M-x k8s-pods
 
 (require 'cl-lib)
+(require 'ansi-color)
 (require 'magit-section)
 (require 'docker-http)
 (require 'k8s)
@@ -422,14 +423,20 @@ cancels."
   (setq k8s--log-process nil))
 
 (defun k8s--log-append (buf bytes)
-  "Append BYTES to BUF, autoscrolling if point was at the end."
+  "Append BYTES to BUF, autoscrolling if point was at the end.
+ANSI colour escapes in BYTES are translated to text properties via
+`ansi-color-apply-on-region', which is stateful across calls (it
+buffers partial escapes that span chunk boundaries) so the ^[[…m
+junk doesn't leak through."
   (when (buffer-live-p buf)
     (with-current-buffer buf
       (let ((inhibit-read-only t)
             (at-end (= (point) (point-max))))
         (save-excursion
           (goto-char (point-max))
-          (insert bytes))
+          (let ((beg (point)))
+            (insert bytes)
+            (ansi-color-apply-on-region beg (point))))
         (when at-end (goto-char (point-max)))))))
 
 (defun k8s--log-start (&optional tail-lines)
