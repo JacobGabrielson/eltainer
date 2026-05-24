@@ -85,9 +85,14 @@ Returns nil when S is nil or unparseable.  Handles binary suffixes
 
 (defun k8s-metrics-collect (conn &optional namespace)
   "Fetch pod metrics via CONN, optionally limited to NAMESPACE.
-Return a hash table keyed \"NS/POD\" whose values are alists of
-\(CONTAINER-NAME . (CPU-MILLICORES . MEM-BYTES)).  Returns nil when
-the `metrics.k8s.io' API is unavailable (no metrics-server)."
+Return a hash table keyed \"NS/POD\" whose values are themselves
+hash tables of CONTAINER-NAME -> (CPU-MILLICORES . MEM-BYTES).
+Returns nil when the `metrics.k8s.io' API is unavailable
+\(no metrics-server).
+
+Inner hashes (one per pod) make the per-container lookup in the
+pod-render hot path O(1) instead of the prior O(n) `assoc'
+on a per-pod alist."
   (let ((items (k8s-metrics-list-pods conn namespace)))
     (when items
       (let ((table (make-hash-table :test 'equal)))
@@ -96,17 +101,17 @@ the `metrics.k8s.io' API is unavailable (no metrics-server)."
                  (ns (cdr (assq 'namespace meta)))
                  (name (cdr (assq 'name meta)))
                  (key (format "%s/%s" ns name))
-                 acc)
+                 (per-cname (make-hash-table :test 'equal)))
             (seq-doseq (c (cdr (assq 'containers pm)))
               (let ((cn (cdr (assq 'name c)))
                     (usage (cdr (assq 'usage c))))
-                (push (cons cn
-                            (cons (k8s-metrics--parse-cpu
-                                   (cdr (assq 'cpu usage)))
-                                  (k8s-metrics--parse-memory
-                                   (cdr (assq 'memory usage)))))
-                      acc)))
-            (puthash key acc table)))
+                (puthash cn
+                         (cons (k8s-metrics--parse-cpu
+                                (cdr (assq 'cpu usage)))
+                               (k8s-metrics--parse-memory
+                                (cdr (assq 'memory usage))))
+                         per-cname)))
+            (puthash key per-cname table)))
         table))))
 
 ;;; ---------------------------------------------------------------------------
@@ -382,7 +387,7 @@ when NET-ENTRY itself is nil."
               (setq k8s-metrics--cm-history (make-hash-table :test 'equal)))
             (seq-doseq (cs statuses)
               (let* ((cname (cdr (assq 'name cs)))
-                     (u (cdr (assoc cname usage)))
+                     (u (and (hash-table-p usage) (gethash cname usage)))
                      (disk (and summary-pod
                                 (k8s-metrics--summary-container-disk
                                  summary-pod cname)))

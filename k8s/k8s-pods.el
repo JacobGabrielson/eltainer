@@ -138,9 +138,10 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
                (image (cdr (assq 'image cs)))
                (ready (cdr (assq 'ready cs)))
                (rc (or (cdr (assq 'restartCount cs)) 0))
-               (usage (and k8s--metrics-cache
-                           (cdr (assoc cname
-                                       (gethash podkey k8s--metrics-cache)))))
+               (per-cname (and k8s--metrics-cache
+                               (gethash podkey k8s--metrics-cache)))
+               (usage (and (hash-table-p per-cname)
+                           (gethash cname per-cname)))
                (disk (and summary-pod
                           (k8s-metrics--summary-container-disk
                            summary-pod cname)))
@@ -223,15 +224,18 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
 (defun k8s--metrics-update-cm-history (metrics)
   "Fold the per-container cpu/mem in METRICS into `k8s--cm-history'.
 METRICS is the hash from `k8s-metrics-collect': \"NS/POD\" ->
-\((CNAME . (CPU . MEM))...)."
+hash-of CNAME -> (CPU . MEM)."
   (unless k8s--cm-history
     (setq k8s--cm-history (make-hash-table :test 'equal)))
   (maphash
-   (lambda (podkey conts)
-     (dolist (c conts)
-       (k8s-metrics-cm-sample k8s--cm-history
-                              (concat podkey "/" (car c))
-                              (cadr c) (cddr c))))
+   (lambda (podkey per-cname)
+     (when (hash-table-p per-cname)
+       (maphash (lambda (cname usage)
+                  (k8s-metrics-cm-sample
+                   k8s--cm-history
+                   (concat podkey "/" cname)
+                   (car usage) (cdr usage)))
+                per-cname)))
    metrics))
 
 (defun k8s--metrics-tick (buf)
