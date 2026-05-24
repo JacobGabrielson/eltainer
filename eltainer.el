@@ -72,29 +72,58 @@ switch targets in the dashboard."
   :type '(repeat directory)
   :group 'eltainer)
 
+(defvar eltainer--discover-files-cache nil
+  "Memoized result of `eltainer--discover-kubeconfig-files'.
+Plist (:key KEY :files LIST).  KEY captures the scan inputs that
+can change file membership — KUBECONFIG env, the extra-paths list,
+and an alist of (DIR . MTIME) for every readable search dir — so
+adding or removing a kubeconfig invalidates the cache automatically.")
+
+(defun eltainer--discover-scan-key ()
+  "Return the cache key for `eltainer--discover-kubeconfig-files'."
+  (list (getenv "KUBECONFIG")
+        eltainer-kubeconfig-extra-paths
+        (cl-loop for dir in eltainer-kubeconfig-search-dirs
+                 for expanded = (expand-file-name dir)
+                 when (file-directory-p expanded)
+                 collect (cons expanded
+                               (file-attribute-modification-time
+                                (file-attributes expanded))))))
+
 (defun eltainer--discover-kubeconfig-files ()
   "Return de-duplicated kubeconfig file paths from all known sources.
 Sources, in order: `$KUBECONFIG' (colon-separated), files in
-`eltainer-kubeconfig-search-dirs', and `eltainer-kubeconfig-extra-paths'."
-  (let* ((env (getenv "KUBECONFIG"))
-         (env-paths (and env (split-string env ":" t)))
-         (dir-paths
-          (cl-loop for dir in eltainer-kubeconfig-search-dirs
-                   for expanded = (expand-file-name dir)
-                   when (file-directory-p expanded)
-                   append (directory-files expanded t
-                                           "\\`config\\(?:-.*\\)?\\'" t)))
-         (all (append env-paths dir-paths eltainer-kubeconfig-extra-paths))
-         seen out)
-    (dolist (p all)
-      (let ((full (and p (expand-file-name p))))
-        (when (and full
-                   (file-readable-p full)
-                   (not (file-directory-p full))
-                   (not (member full seen)))
-          (push full seen)
-          (push full out))))
-    (nreverse out)))
+`eltainer-kubeconfig-search-dirs', and `eltainer-kubeconfig-extra-paths'.
+
+Memoized: dashboard refreshes don't re-glob the scan dirs unless
+something in `eltainer--discover-scan-key' actually changed
+\(env, extra-paths, or a search dir's mtime — which moves whenever
+a file in it is added or removed)."
+  (let ((key (eltainer--discover-scan-key)))
+    (if (equal key (plist-get eltainer--discover-files-cache :key))
+        (plist-get eltainer--discover-files-cache :files)
+      (let* ((env (getenv "KUBECONFIG"))
+             (env-paths (and env (split-string env ":" t)))
+             (dir-paths
+              (cl-loop for dir in eltainer-kubeconfig-search-dirs
+                       for expanded = (expand-file-name dir)
+                       when (file-directory-p expanded)
+                       append (directory-files expanded t
+                                               "\\`config\\(?:-.*\\)?\\'" t)))
+             (all (append env-paths dir-paths eltainer-kubeconfig-extra-paths))
+             seen out)
+        (dolist (p all)
+          (let ((full (and p (expand-file-name p))))
+            (when (and full
+                       (file-readable-p full)
+                       (not (file-directory-p full))
+                       (not (member full seen)))
+              (push full seen)
+              (push full out))))
+        (let ((result (nreverse out)))
+          (setq eltainer--discover-files-cache
+                (list :key key :files result))
+          result)))))
 
 (defun eltainer--discover-kubeconfigs ()
   "Return all (FILE . CONTEXT-NAME) candidates across known files.

@@ -258,25 +258,68 @@ Handles https://host:port format."
      :user (cdr (assoc "user" ctx))
      :namespace (cdr (assoc "namespace" ctx)))))
 
+(defconst k8s-config--cache-max 8
+  "Maximum number of parsed kubeconfigs kept in the memo cache.
+Most users have a handful at most; bounded so a perverse load-path
+walk can't blow memory.")
+
+(defvar k8s-config--cache nil
+  "Memoization for `k8s-config-load': alist of ((PATH . MTIME) . PARSED).
+Newest entry at the head; entries past `k8s-config--cache-max' are
+dropped LRU-ish.  Invalidated automatically when the file's mtime
+changes; the user can force a reset via `k8s-config-cache-reset'.")
+
+(defun k8s-config--cache-lookup (path mtime)
+  "Return cached parsed config for (PATH . MTIME), or nil."
+  (cdr (assoc (cons path mtime) k8s-config--cache)))
+
+(defun k8s-config--cache-put (path mtime parsed)
+  "Store PARSED under (PATH . MTIME), evicting older entries past the bound."
+  (let ((key (cons path mtime)))
+    (setq k8s-config--cache
+          (cons (cons key parsed)
+                (cl-remove-if (lambda (e) (equal (car e) key))
+                              k8s-config--cache)))
+    (when (> (length k8s-config--cache) k8s-config--cache-max)
+      (setq k8s-config--cache
+            (cl-subseq k8s-config--cache 0 k8s-config--cache-max)))))
+
+(defun k8s-config-cache-reset ()
+  "Forget every cached kubeconfig parse.
+Mostly for debugging; the cache is mtime-keyed so editing a file
+in place already invalidates its entry automatically."
+  (interactive)
+  (setq k8s-config--cache nil)
+  (message "k8s-config: cache cleared"))
+
 (defun k8s-config-load (path)
   "Load and parse a kubeconfig file at PATH.
-Returns a `k8s-config' struct."
-  (let* ((yaml-str (with-temp-buffer
-                     (insert-file-contents-literally path)
-                     (decode-coding-string (buffer-string) 'utf-8)))
-         (data (k8s--yaml-parse-string yaml-str))
-         (clusters (mapcar #'k8s--build-cluster
-                           (cdr (assoc "clusters" data))))
-         (users (mapcar #'k8s--build-user
-                        (cdr (assoc "users" data))))
-         (contexts (mapcar #'k8s--build-context
-                           (cdr (assoc "contexts" data))))
-         (current (cdr (assoc "current-context" data))))
-    (k8s-config--new
-     :clusters clusters
-     :users users
-     :contexts contexts
-     :current-context current)))
+Returns a `k8s-config' struct.  Memoized by (PATH . MTIME): a
+dashboard refresh that re-discovers the same files does not
+re-read or re-parse the YAML (with its base64-decoded cert
+material), as long as the file hasn't been touched."
+  (let* ((attrs (file-attributes path 'integer))
+         (mtime (and attrs (file-attribute-modification-time attrs)))
+         (cached (and mtime (k8s-config--cache-lookup path mtime))))
+    (or cached
+        (let* ((yaml-str (with-temp-buffer
+                           (insert-file-contents-literally path)
+                           (decode-coding-string (buffer-string) 'utf-8)))
+               (data (k8s--yaml-parse-string yaml-str))
+               (clusters (mapcar #'k8s--build-cluster
+                                 (cdr (assoc "clusters" data))))
+               (users (mapcar #'k8s--build-user
+                              (cdr (assoc "users" data))))
+               (contexts (mapcar #'k8s--build-context
+                                 (cdr (assoc "contexts" data))))
+               (current (cdr (assoc "current-context" data)))
+               (parsed (k8s-config--new
+                        :clusters clusters
+                        :users users
+                        :contexts contexts
+                        :current-context current)))
+          (when mtime (k8s-config--cache-put path mtime parsed))
+          parsed))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Lookup helpers
