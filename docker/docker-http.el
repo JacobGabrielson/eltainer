@@ -232,6 +232,197 @@ Header names are lower-cased; values are trimmed."
       (list status-line header-block body))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Connection pool (HTTP/1.1 keep-alive)
+;;
+;; Sockets used by `docker-http-request' used to be opened, used for one
+;; request, and closed.  TLS handshakes alone are ~100ms (more over
+;; LAN/WAN); for K8s-side bursts (list pods, then describe each, then
+;; events) we paid that per request.
+;;
+;; Now: after a response, if it didn't carry `Connection: close', the
+;; socket goes back to a per-cfg pool keyed by host+port+TLS material.
+;; Next `docker-http-request' for the same cfg pops an idle socket
+;; first.  Streaming callers (logs, events, watches, exec) still open
+;; their own long-lived sockets — they're not pooled.
+;;
+;; To disable: set `docker-http-pool-max' to 0 — acquire always misses
+;; and release always closes, restoring the close-per-request behaviour.
+
+(defcustom docker-http-pool-max 4
+  "Max idle keep-alive sockets kept per cfg in the connection pool.
+Set to 0 to disable pooling entirely (close after every request)."
+  :type 'integer
+  :group 'docker-http)
+
+(defcustom docker-http-pool-idle-seconds 25
+  "Drop a pooled socket if it has been idle longer than this many seconds.
+Most servers (nginx, Apache, K8s apiserver, Docker daemon) keep
+sockets open for at least 30s; 25s leaves margin so we never
+hand the caller a half-closed socket."
+  :type 'number
+  :group 'docker-http)
+
+(defvar docker-http--pool (make-hash-table :test 'equal)
+  "Connection pool.
+Key: signature from `docker-http--pool-key'.  Value: list of
+\(PROC . LAST-RELEASED-FLOAT-TIME) with the most-recently-released
+at the head -- those are least likely to have been closed by the
+server since we let go.")
+
+(defun docker-http--pool-key (cfg)
+  "Return a stable equality key for CFG's connection params."
+  (list (docker-config-socket-path cfg)
+        (docker-config-host cfg)
+        (docker-config-port cfg)
+        (and (or (docker-config-tls cfg)
+                 (docker-config-tls-verify cfg)) t)
+        (docker-config-tls-ca-cert cfg)
+        (docker-config-tls-cert cfg)
+        (docker-config-tls-key cfg)))
+
+(defun docker-http--idle-discard (_proc _data)
+  "Process filter for pooled idle sockets — silently drops unexpected bytes."
+  nil)
+
+(defun docker-http--pool-acquire (cfg)
+  "Pop a live, fresh pooled socket for CFG, or nil if none usable.
+Walks the per-cfg list head-to-tail (MRU first), discarding dead or
+stale entries, and returns the first viable one."
+  (when (> docker-http-pool-max 0)
+    (let ((key (docker-http--pool-key cfg))
+          (now (float-time))
+          result kept)
+      (dolist (entry (gethash key docker-http--pool))
+        (let ((proc (car entry))
+              (last (cdr entry)))
+          (cond
+           (result (push entry kept))                       ; already have one
+           ((not (process-live-p proc)))                    ; server closed, drop
+           ((> (- now last) docker-http-pool-idle-seconds)  ; stale, kill
+            (ignore-errors (delete-process proc)))
+           (t (setq result proc)))))
+      (puthash key (nreverse kept) docker-http--pool)
+      result)))
+
+(defun docker-http--pool-release (cfg proc)
+  "Return PROC to CFG's pool if alive and the pool isn't full.
+Sets `docker-http--idle-discard' as the filter so stray bytes don't
+land in the process buffer between requests."
+  (cond
+   ((not (process-live-p proc))
+    nil)
+   ((<= docker-http-pool-max 0)
+    (ignore-errors (delete-process proc)))
+   (t
+    (let* ((key (docker-http--pool-key cfg))
+           (entries (gethash key docker-http--pool)))
+      (cond
+       ((>= (length entries) docker-http-pool-max)
+        (ignore-errors (delete-process proc)))
+       (t
+        (set-process-filter proc #'docker-http--idle-discard)
+        (puthash key (cons (cons proc (float-time)) entries)
+                 docker-http--pool)))))))
+
+(defun docker-http-pool-flush ()
+  "Close every pooled socket and clear the pool.
+Useful after a network change or when debugging connection issues."
+  (interactive)
+  (let ((n 0))
+    (maphash (lambda (_k entries)
+               (dolist (entry entries)
+                 (let ((proc (car entry)))
+                   (when (process-live-p proc)
+                     (ignore-errors (delete-process proc))
+                     (cl-incf n)))))
+             docker-http--pool)
+    (clrhash docker-http--pool)
+    (message "docker-http: flushed %d pooled socket%s"
+             n (if (= n 1) "" "s"))))
+
+;;; ---------------------------------------------------------------------------
+;;; Incremental response detection (drives the sync request's poll loop)
+
+(defun docker-http--try-decode-chunked (scratch start)
+  "Try to decode a chunked body in SCRATCH starting at buffer pos START.
+Returns the decoded body string if complete (saw the 0-size
+terminator), else nil for \"need more bytes\".  Read-only — does
+not consume the buffer."
+  (when (buffer-live-p scratch)
+    (with-current-buffer scratch
+      (save-excursion
+        (let ((pos start) chunks complete)
+          (catch 'incomplete
+            (while (and (not complete) (< pos (point-max)))
+              (goto-char pos)
+              (let ((eol (and (search-forward "\r\n" nil t)
+                              (- (point) 2))))
+                (unless eol (throw 'incomplete nil))
+                (let* ((size-hex (buffer-substring-no-properties pos eol))
+                       (size (string-to-number
+                              (replace-regexp-in-string ";.*\\'" "" size-hex)
+                              16))
+                       (body-start (+ eol 2)))
+                  (if (zerop size)
+                      (setq complete t)
+                    (when (> (+ body-start size 2) (point-max))
+                      (throw 'incomplete nil))
+                    (push (buffer-substring-no-properties
+                           body-start (+ body-start size))
+                          chunks)
+                    (setq pos (+ body-start size 2)))))))
+          (when complete (apply #'concat (nreverse chunks))))))))
+
+(defun docker-http--try-parse-response (scratch)
+  "If SCRATCH contains a complete HTTP response, return it parsed; else nil.
+Knows about Content-Length and Transfer-Encoding: chunked.  Without
+either header it returns nil — the caller falls back to \"wait for
+EOF\", matching HTTP/1.0 bodyless-by-close framing."
+  (when (buffer-live-p scratch)
+    (with-current-buffer scratch
+      (save-excursion
+        (goto-char (point-min))
+        (let ((sep (and (search-forward "\r\n\r\n" nil t)
+                        (- (point) 4))))
+          (when sep
+            (let* ((head (buffer-substring-no-properties (point-min) sep))
+                   (lines (split-string head "\r\n"))
+                   (status-line (car lines))
+                   (header-block (mapconcat #'identity (cdr lines) "\r\n"))
+                   (status (docker-http--parse-status-line status-line))
+                   (headers (docker-http--parse-headers header-block))
+                   (body-start (+ sep 4))
+                   (body-bytes (- (point-max) body-start))
+                   (clen (alist-get "content-length"
+                                    headers nil nil #'string=))
+                   (te (alist-get "transfer-encoding"
+                                  headers nil nil #'string=)))
+              (cond
+               (clen
+                (let ((n (string-to-number clen)))
+                  (when (>= body-bytes n)
+                    (docker-http-response--new
+                     :status (car status) :reason (cdr status)
+                     :headers headers
+                     :body (buffer-substring-no-properties
+                            body-start (+ body-start n))))))
+               ((and te (string= (downcase te) "chunked"))
+                (when-let ((decoded (docker-http--try-decode-chunked
+                                     scratch body-start)))
+                  (docker-http-response--new
+                   :status (car status) :reason (cdr status)
+                   :headers headers :body decoded)))
+               (t nil)))))))))
+
+(defun docker-http--keep-alive-p (response)
+  "Return non-nil when RESPONSE leaves the socket reusable.
+HTTP/1.1 default is keep-alive unless `Connection: close'."
+  (let ((c (alist-get "connection"
+                      (docker-http-response-headers response)
+                      nil nil #'string=)))
+    (not (and c (string-match-p "close" (downcase c))))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Public: sync request
 
 (cl-defun docker-http-request (cfg method path &key headers body query)
@@ -242,44 +433,84 @@ QUERY is an alist of (KEY . VALUE) pairs URL-encoded into the path.
 HEADERS is an alist of extra request headers (merged on top of defaults).
 BODY is a string (typically pre-`json-serialize'd); set this *and*
 add a `Content-Type: application/json' header for JSON requests."
-  (let* ((proc (docker-http--connect cfg))
-         (headers (docker-http--merge-headers
-                   (docker-config-default-headers cfg) headers))
-         (request (docker-http--build-request method path headers body query))
-         ;; Collect bytes in a hidden unibyte buffer instead of a
-         ;; string accumulator: `insert' is O(chunk) instead of the
-         ;; O(n²) of `(setq received (concat received data))'.  The
-         ;; *process* buffer isn't reused for this — Emacs's default
-         ;; filter would write a "Process X connection broken by
-         ;; remote peer\n" trailer there on TLS close, which would
-         ;; tail-corrupt the response and confuse `json-parse-string'.
-         (scratch (docker-http--make-scratch "docker-http-request")))
+  (let* ((acquired (docker-http--pool-acquire cfg))
+         (proc (or acquired (docker-http--connect cfg)))
+         ;; Default to keep-alive when the pool is enabled; caller can
+         ;; still override via their own Connection header (e.g. the
+         ;; TTY-exec path wants `Connection: Upgrade').
+         (conn-default (if (> docker-http-pool-max 0) "keep-alive" "close"))
+         (request-headers (docker-http--merge-headers
+                           `(("Connection" . ,conn-default))
+                           headers))
+         (merged-headers (docker-http--merge-headers
+                          (docker-config-default-headers cfg)
+                          request-headers))
+         (request (docker-http--build-request method path
+                                              merged-headers body query))
+         ;; Collect bytes in a hidden unibyte buffer; insert is O(chunk)
+         ;; instead of the O(n²) of `(setq received (concat received
+         ;; data))'.  The *process* buffer isn't reused for this —
+         ;; Emacs's default filter writes a "Process X connection
+         ;; broken by remote peer\n" trailer there on TLS close, which
+         ;; would tail-corrupt the response and confuse the parser.
+         (scratch (docker-http--make-scratch "docker-http-request"))
+         (response nil)
+         (pooled nil))
     (set-process-filter proc (lambda (_p data)
                                (when (buffer-live-p scratch)
                                  (with-current-buffer scratch
                                    (goto-char (point-max))
                                    (insert data)))))
     (unwind-protect
-        (let (received parts status headers* body*)
+        (progn
           (process-send-string proc request)
-          (while (process-live-p proc)
-            (accept-process-output proc 1.0))
-          (setq received (with-current-buffer scratch
-                           (buffer-substring-no-properties
-                            (point-min) (point-max))))
-          (setq parts (docker-http--split-response received))
-          (setq status (docker-http--parse-status-line (nth 0 parts)))
-          (setq headers* (docker-http--parse-headers (nth 1 parts)))
-          (setq body* (docker-http--decode-body headers* (nth 2 parts)))
-          (docker-http-response--new
-           :status (car status)
-           :reason (cdr status)
-           :headers headers*
-           :body body*))
+          ;; Incremental wait: stop as soon as we can parse a complete
+          ;; response (Content-Length / chunked).  Falling back on
+          ;; "process died" handles HTTP/1.0 bodyless-by-close framing.
+          (catch 'done
+            (while t
+              (setq response (docker-http--try-parse-response scratch))
+              (when response (throw 'done t))
+              (unless (process-live-p proc)
+                ;; Socket closed mid-response — try a final best-effort
+                ;; parse against whatever bytes did arrive.
+                (let ((raw (with-current-buffer scratch
+                             (buffer-substring-no-properties
+                              (point-min) (point-max)))))
+                  (when (> (length raw) 0)
+                    (setq response
+                          (condition-case nil
+                              (let* ((parts (docker-http--split-response raw))
+                                     (status (docker-http--parse-status-line
+                                              (nth 0 parts)))
+                                     (h* (docker-http--parse-headers
+                                          (nth 1 parts)))
+                                     (b* (docker-http--decode-body
+                                          h* (nth 2 parts))))
+                                (docker-http-response--new
+                                 :status (car status) :reason (cdr status)
+                                 :headers h* :body b*))
+                            (error nil)))))
+                (throw 'done t))
+              (accept-process-output proc 1.0)))
+          (cond
+           ((and response
+                 (docker-http--keep-alive-p response)
+                 (process-live-p proc))
+            (docker-http--pool-release cfg proc)
+            (setq pooled t))
+           ((process-live-p proc)
+            (ignore-errors (delete-process proc))))
+          (or response
+              (signal 'docker-http-error
+                      (list "no response" method path))))
       (when (buffer-live-p scratch) (kill-buffer scratch))
-      (when (process-live-p proc) (delete-process proc))
-      (let ((buf (process-buffer proc)))
-        (when (buffer-live-p buf) (kill-buffer buf))))))
+      ;; Pooled procs keep their process-buffer alive (still owned by
+      ;; the proc).  Only kill it when we've actually dropped the proc.
+      (unless pooled
+        (when (process-live-p proc) (ignore-errors (delete-process proc)))
+        (let ((buf (process-buffer proc)))
+          (when (buffer-live-p buf) (kill-buffer buf)))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Public: streaming request
