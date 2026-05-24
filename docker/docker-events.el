@@ -102,7 +102,9 @@ again, blowing `max-lisp-eval-depth' under bursty event traffic
             (docker-http-stream
              cfg "GET" "/events"
              :on-chunk (lambda (bytes) (funcall ndjson bytes))
-             :on-close (lambda () (setq docker-events--process nil)))))))
+             :on-close (lambda ()
+                         (funcall ndjson 'cleanup)
+                         (setq docker-events--process nil)))))))
 
 (defun docker-events-subscribe (buffer match-fn refresh-fn)
   "Register BUFFER to refresh via REFRESH-FN when MATCH-FN matches an event.

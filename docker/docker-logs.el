@@ -121,7 +121,10 @@ Returns the buffer."
              :on-chunk
              (if demux
                  (lambda (bytes) (funcall demux bytes))
-               (lambda (bytes) (docker-logs--insert buf 'stdout bytes))))))
+               (lambda (bytes) (docker-logs--insert buf 'stdout bytes)))
+             :on-close
+             (when demux
+               (lambda () (funcall demux 'cleanup))))))
     buf))
 
 (defun docker-logs-restart ()

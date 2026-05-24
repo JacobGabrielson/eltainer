@@ -61,6 +61,7 @@
                            (message "k8s watch: HTTP %d on %s" status path)))
            :on-chunk (lambda (bytes) (funcall ndjson bytes))
            :on-close (lambda ()
+                       (funcall ndjson 'cleanup)
                        (when (k8s-watch-active watch)
                          (k8s-watch--reconnect watch)))))
     (setf (k8s-watch-retry-count watch) 0)

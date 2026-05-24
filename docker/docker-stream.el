@@ -16,36 +16,82 @@
 (require 'cl-lib)
 
 ;;; ---------------------------------------------------------------------------
+;;; Scratch-buffer accumulators
+;;
+;; Each parser used to append every chunk to a string accumulator —
+;; `(setq buf (concat buf bytes))' — which is quietly O(n²) in total
+;; bytes received.  Now each closure owns a hidden unibyte buffer
+;; instead: `insert' is O(chunk), and the parser walks point /
+;; `delete-region's consumed prefixes, so total work stays O(n).
+;;
+;; Buffer lifetime: callers should `(funcall closure 'cleanup)' on
+;; stream close for prompt release; if they forget, a finalizer
+;; attached to the closure kills the scratch buffer when the
+;; closure is garbage-collected.
+;;
+;; NOTE: the finalizer's lambda *must not* reference the closure
+;; (directly or indirectly) — otherwise the closure stays alive
+;; forever and the finalizer never fires.  We only capture
+;; `scratch' in the finalizer's body, and the closure body has a
+;; `(ignore finalizer)' to keep finalizer alive as long as the
+;; closure is reachable.
+
+(defun docker-stream--make-scratch (name)
+  "Create a hidden unibyte scratch buffer for stream parsing."
+  (let ((buf (generate-new-buffer (concat " *" name "*") t)))
+    (with-current-buffer buf
+      (set-buffer-multibyte nil))
+    buf))
+
+;;; ---------------------------------------------------------------------------
 ;;; Multiplex stream demuxer
 
 (defun docker-stream-make-demux (on-frame)
   "Return a function that feeds bytes through the 8-byte multiplex framer.
 ON-FRAME is `(lambda (STREAM-TYPE PAYLOAD-BYTES))', STREAM-TYPE one of
-`stdin' / `stdout' / `stderr' / `unknown'."
-  (let ((buf ""))
+`stdin' / `stdout' / `stderr' / `unknown'.
+
+The returned closure recognises a `cleanup' sentinel symbol:
+calling it with that symbol in place of bytes releases the
+parser's scratch buffer eagerly.  Without that, the buffer is
+killed only when the closure is garbage-collected."
+  (let* ((scratch (docker-stream--make-scratch "docker-stream-demux"))
+         (finalizer (make-finalizer
+                     (lambda ()
+                       (when (buffer-live-p scratch)
+                         (kill-buffer scratch))))))
     (lambda (bytes)
-      (setq buf (concat buf bytes))
-      (let ((pos 0)
-            (len (length buf)))
-        (catch 'done
-          (while (>= (- len pos) 8)
-            (let* ((typ (aref buf pos))
-                   (size (logior (ash (aref buf (+ pos 4)) 24)
-                                 (ash (aref buf (+ pos 5)) 16)
-                                 (ash (aref buf (+ pos 6)) 8)
-                                 (aref buf (+ pos 7))))
-                   (payload-end (+ pos 8 size)))
-              (if (> payload-end len)
-                  (throw 'done nil)
-                (funcall on-frame
-                         (pcase typ
-                           (0 'stdin)
-                           (1 'stdout)
-                           (2 'stderr)
-                           (_ 'unknown))
-                         (substring buf (+ pos 8) payload-end))
-                (setq pos payload-end)))))
-        (setq buf (substring buf pos))))))
+      (ignore finalizer)
+      (cond
+       ((eq bytes 'cleanup)
+        (when (buffer-live-p scratch) (kill-buffer scratch)))
+       ((null bytes) nil)
+       ((buffer-live-p scratch)
+        (with-current-buffer scratch
+          (goto-char (point-max))
+          (insert bytes)
+          (goto-char (point-min))
+          (catch 'incomplete
+            (while (>= (- (point-max) (point)) 8)
+              (let* ((p (point))
+                     (typ (char-after p))
+                     (size (logior (ash (char-after (+ p 4)) 24)
+                                   (ash (char-after (+ p 5)) 16)
+                                   (ash (char-after (+ p 6)) 8)
+                                   (char-after (+ p 7))))
+                     (frame-end (+ p 8 size)))
+                (if (> frame-end (point-max))
+                    (throw 'incomplete nil)
+                  (let ((payload (buffer-substring-no-properties
+                                  (+ p 8) frame-end)))
+                    (delete-region (point-min) frame-end)
+                    (funcall on-frame
+                             (pcase typ
+                               (0 'stdin)
+                               (1 'stdout)
+                               (2 'stderr)
+                               (_ 'unknown))
+                             payload))))))))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; NDJSON splitter
@@ -53,26 +99,46 @@ ON-FRAME is `(lambda (STREAM-TYPE PAYLOAD-BYTES))', STREAM-TYPE one of
 (defun docker-stream-make-ndjson (on-object &optional on-malformed)
   "Return a function that splits bytes into newline-terminated JSON objects.
 ON-OBJECT is `(lambda (OBJECT))' invoked with each decoded alist/list.
-ON-MALFORMED is `(lambda (LINE ERR-STRING))' for parse failures (optional)."
-  (let ((buf ""))
+ON-MALFORMED is `(lambda (LINE ERR-STRING))' for parse failures (optional).
+
+The returned closure recognises a `cleanup' sentinel symbol:
+calling it with that symbol in place of bytes releases the
+parser's scratch buffer eagerly.  Without that, the buffer is
+killed only when the closure is garbage-collected."
+  (let* ((scratch (docker-stream--make-scratch "docker-stream-ndjson"))
+         (finalizer (make-finalizer
+                     (lambda ()
+                       (when (buffer-live-p scratch)
+                         (kill-buffer scratch))))))
     (lambda (bytes)
-      (setq buf (concat buf bytes))
-      (let ((lines (split-string buf "\n")))
-        ;; Last element is the partial (may be empty) — stash it back.
-        (setq buf (car (last lines)))
-        (dolist (line (butlast lines))
-          (when (> (length (string-trim line)) 0)
-            (condition-case err
-                (funcall on-object
-                         (json-parse-string
-                          line
-                          :object-type 'alist
-                          :array-type 'list
-                          :null-object nil
-                          :false-object :false))
-              (error
-               (when on-malformed
-                 (funcall on-malformed line (error-message-string err)))))))))))
+      (ignore finalizer)
+      (cond
+       ((eq bytes 'cleanup)
+        (when (buffer-live-p scratch) (kill-buffer scratch)))
+       ((null bytes) nil)
+       ((buffer-live-p scratch)
+        (with-current-buffer scratch
+          (goto-char (point-max))
+          (insert bytes)
+          (goto-char (point-min))
+          (while (search-forward "\n" nil t)
+            (let ((line (buffer-substring-no-properties
+                         (point-min) (1- (point)))))
+              (delete-region (point-min) (point))
+              (when (> (length (string-trim line)) 0)
+                (condition-case err
+                    (funcall on-object
+                             (json-parse-string
+                              line
+                              :object-type 'alist
+                              :array-type 'list
+                              :null-object nil
+                              :false-object :false))
+                  (error
+                   (when on-malformed
+                     (funcall on-malformed line
+                              (error-message-string err))))))
+              (goto-char (point-min))))))))))
 
 (provide 'docker-stream)
 ;;; docker-stream.el ends here

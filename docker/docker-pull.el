@@ -95,6 +95,7 @@ buffer.  Returns the buffer."
      :headers (when auth `(("X-Registry-Auth" . ,auth)))
      :on-chunk (lambda (bytes) (funcall ndjson bytes))
      :on-close (lambda ()
+                 (funcall ndjson 'cleanup)
                  (when (buffer-live-p buf)
                    (with-current-buffer buf
                      (let ((inhibit-read-only t))

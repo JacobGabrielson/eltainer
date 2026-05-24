@@ -246,19 +246,27 @@ add a `Content-Type: application/json' header for JSON requests."
          (headers (docker-http--merge-headers
                    (docker-config-default-headers cfg) headers))
          (request (docker-http--build-request method path headers body query))
-         ;; Collect bytes in this string instead of the process buffer.
-         ;; Emacs's default filter writes a "Process X connection broken
-         ;; by remote peer\n" trailer into the buffer when a TLS
-         ;; connection ends — that synthesized text would otherwise tail-
-         ;; corrupt the response body and confuse `json-parse-string'.
-         (received ""))
+         ;; Collect bytes in a hidden unibyte buffer instead of a
+         ;; string accumulator: `insert' is O(chunk) instead of the
+         ;; O(n²) of `(setq received (concat received data))'.  The
+         ;; *process* buffer isn't reused for this — Emacs's default
+         ;; filter would write a "Process X connection broken by
+         ;; remote peer\n" trailer there on TLS close, which would
+         ;; tail-corrupt the response and confuse `json-parse-string'.
+         (scratch (docker-http--make-scratch "docker-http-request")))
     (set-process-filter proc (lambda (_p data)
-                               (setq received (concat received data))))
+                               (when (buffer-live-p scratch)
+                                 (with-current-buffer scratch
+                                   (goto-char (point-max))
+                                   (insert data)))))
     (unwind-protect
-        (let (parts status headers* body*)
+        (let (received parts status headers* body*)
           (process-send-string proc request)
           (while (process-live-p proc)
             (accept-process-output proc 1.0))
+          (setq received (with-current-buffer scratch
+                           (buffer-substring-no-properties
+                            (point-min) (point-max))))
           (setq parts (docker-http--split-response received))
           (setq status (docker-http--parse-status-line (nth 0 parts)))
           (setq headers* (docker-http--parse-headers (nth 1 parts)))
@@ -268,6 +276,7 @@ add a `Content-Type: application/json' header for JSON requests."
            :reason (cdr status)
            :headers headers*
            :body body*))
+      (when (buffer-live-p scratch) (kill-buffer scratch))
       (when (process-live-p proc) (delete-process proc))
       (let ((buf (process-buffer proc)))
         (when (buffer-live-p buf) (kill-buffer buf))))))
@@ -281,80 +290,112 @@ add a `Content-Type: application/json' header for JSON requests."
 
 (cl-defstruct (docker-http--stream-state
                (:constructor docker-http--stream-state--new))
-  buffer       ; raw read buffer (string accumulator)
+  scratch      ; unibyte buffer object for incremental parsing
   headers-seen ; t once we've parsed the status line + headers
   chunked      ; t if Transfer-Encoding: chunked
   on-headers
   on-chunk
   on-close)
 
+(defun docker-http--make-scratch (name)
+  "Create a hidden unibyte scratch buffer named NAME for stream parsing."
+  (let ((buf (generate-new-buffer (concat " *" name "*") t)))
+    (with-current-buffer buf
+      (set-buffer-multibyte nil))
+    buf))
+
 (defun docker-http--stream-pump-body (state new)
-  "Pump NEW bytes into STATE; deliver decoded chunks via on-chunk."
-  (let ((buf (concat (docker-http--stream-state-buffer state) new)))
-    (cond
-     ((docker-http--stream-state-chunked state)
-      ;; Pull off whole chunks; leftover stays in the buffer.
-      (let ((pos 0) (len (length buf)) (out nil))
-        (catch 'done
-          (while (< pos len)
-            (let ((eol (string-search "\r\n" buf pos)))
-              (unless eol (throw 'done nil))
-              (let* ((size-hex (substring buf pos eol))
-                     (size (string-to-number
-                            (replace-regexp-in-string ";.*\\'" "" size-hex)
-                            16))
-                     (body-start (+ eol 2)))
-                (when (zerop size)
-                  ;; trailer + close
-                  (setq pos len)
-                  (throw 'done nil))
-                (if (> (+ body-start size 2) len)
-                    (throw 'done nil)
-                  (push (substring buf body-start (+ body-start size)) out)
-                  (setq pos (+ body-start size 2)))))))
-        (setf (docker-http--stream-state-buffer state) (substring buf pos))
-        (dolist (c (nreverse out))
-          (funcall (docker-http--stream-state-on-chunk state) c))))
-     (t
-      (setf (docker-http--stream-state-buffer state) "")
-      (when (> (length buf) 0)
-        (funcall (docker-http--stream-state-on-chunk state) buf))))))
+  "Pump NEW bytes into STATE's scratch buffer; deliver decoded chunks.
+Replaces the previous string-concat accumulator: bytes are appended
+to a unibyte scratch buffer in O(chunk), and consumed prefixes are
+`delete-region'd, so total work stays O(n) regardless of chunk
+size pattern."
+  (let ((scratch (docker-http--stream-state-scratch state)))
+    (unless (buffer-live-p scratch) (cl-return-from docker-http--stream-pump-body))
+    (with-current-buffer scratch
+      (goto-char (point-max))
+      (when (and new (> (length new) 0)) (insert new))
+      (cond
+       ((docker-http--stream-state-chunked state)
+        (goto-char (point-min))
+        (let (out)
+          (catch 'incomplete
+            (while (< (point) (point-max))
+              (let ((eol (save-excursion
+                           (and (search-forward "\r\n" nil t)
+                                (- (point) 2)))))
+                (unless eol (throw 'incomplete nil))
+                (let* ((size-hex (buffer-substring-no-properties (point) eol))
+                       (size (string-to-number
+                              (replace-regexp-in-string ";.*\\'" "" size-hex)
+                              16))
+                       (body-start (+ eol 2)))
+                  (when (zerop size)
+                    ;; trailer + close — drop everything we've buffered.
+                    (delete-region (point-min) (point-max))
+                    (throw 'incomplete nil))
+                  (let ((body-end (+ body-start size)))
+                    (if (> (+ body-end 2) (point-max))
+                        (throw 'incomplete nil)
+                      (push (buffer-substring-no-properties body-start body-end)
+                            out)
+                      ;; Consume "size-hex\r\nbody\r\n" from the head.
+                      (delete-region (point-min) (+ body-end 2))
+                      (goto-char (point-min))))))))
+          (dolist (c (nreverse out))
+            (funcall (docker-http--stream-state-on-chunk state) c))))
+       (t
+        (let ((all (buffer-substring-no-properties (point-min) (point-max))))
+          (delete-region (point-min) (point-max))
+          (when (> (length all) 0)
+            (funcall (docker-http--stream-state-on-chunk state) all))))))))
 
 (defun docker-http--stream-filter (state)
   "Return a process filter closed over STATE."
   (lambda (proc data)
     (if (docker-http--stream-state-headers-seen state)
         (docker-http--stream-pump-body state data)
-      (setf (docker-http--stream-state-buffer state)
-            (concat (docker-http--stream-state-buffer state) data))
-      (let* ((buf (docker-http--stream-state-buffer state))
-             (sep (string-search "\r\n\r\n" buf)))
-        (when sep
-          (let* ((head (substring buf 0 sep))
-                 (rest (substring buf (+ sep 4)))
-                 (lines (split-string head "\r\n"))
-                 (status-line (car lines))
-                 (header-block (mapconcat #'identity (cdr lines) "\r\n"))
-                 (status (docker-http--parse-status-line status-line))
-                 (headers (docker-http--parse-headers header-block))
-                 (chunked (string= (alist-get "transfer-encoding"
-                                              headers nil nil #'string=)
-                                   "chunked")))
-            (setf (docker-http--stream-state-headers-seen state) t)
-            (setf (docker-http--stream-state-chunked state) chunked)
-            (setf (docker-http--stream-state-buffer state) "")
-            (when (docker-http--stream-state-on-headers state)
-              (funcall (docker-http--stream-state-on-headers state)
-                       (car status) (cdr status) headers))
-            (docker-http--stream-pump-body state rest)))
-        (ignore proc)))))
+      (let ((scratch (docker-http--stream-state-scratch state)))
+        (when (buffer-live-p scratch)
+          (with-current-buffer scratch
+            (goto-char (point-max))
+            (when (and data (> (length data) 0)) (insert data))
+            (goto-char (point-min))
+            (let ((sep (save-excursion
+                         (and (search-forward "\r\n\r\n" nil t)
+                              (- (point) 4)))))
+              (when sep
+                (let* ((head (buffer-substring-no-properties (point-min) sep))
+                       (rest (buffer-substring-no-properties
+                              (+ sep 4) (point-max)))
+                       (lines (split-string head "\r\n"))
+                       (status-line (car lines))
+                       (header-block (mapconcat #'identity (cdr lines) "\r\n"))
+                       (status (docker-http--parse-status-line status-line))
+                       (headers (docker-http--parse-headers header-block))
+                       (chunked (string= (alist-get "transfer-encoding"
+                                                    headers nil nil #'string=)
+                                         "chunked")))
+                  (setf (docker-http--stream-state-headers-seen state) t)
+                  (setf (docker-http--stream-state-chunked state) chunked)
+                  (delete-region (point-min) (point-max))
+                  (when (docker-http--stream-state-on-headers state)
+                    (funcall (docker-http--stream-state-on-headers state)
+                             (car status) (cdr status) headers))
+                  (docker-http--stream-pump-body state rest)))))))
+      (ignore proc))))
 
 (defun docker-http--stream-sentinel (state)
-  "Return a process sentinel for STATE; fires on-close on EOF."
+  "Return a process sentinel for STATE.
+On EOF fires on-close (if set), then kills the scratch buffer so
+it doesn't outlive the stream."
   (lambda (proc _event)
     (unless (process-live-p proc)
       (when (docker-http--stream-state-on-close state)
-        (funcall (docker-http--stream-state-on-close state))))))
+        (funcall (docker-http--stream-state-on-close state)))
+      (let ((scratch (docker-http--stream-state-scratch state)))
+        (when (buffer-live-p scratch)
+          (kill-buffer scratch))))))
 
 (cl-defun docker-http-stream (cfg method path
                                   &key headers body query
@@ -372,7 +413,7 @@ Callbacks:
          (headers (docker-http--merge-headers
                    (docker-config-default-headers cfg) headers))
          (state (docker-http--stream-state--new
-                 :buffer ""
+                 :scratch (docker-http--make-scratch "docker-http-stream")
                  :headers-seen nil
                  :chunked nil
                  :on-headers on-headers

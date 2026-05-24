@@ -152,7 +152,7 @@ remote PTY in sync with the Emacs window."
     (docker-exec--start-hijacked
      cfg exec-id nil
      (lambda (bytes) (funcall demux bytes))
-     nil)
+     (lambda () (funcall demux 'cleanup)))
     (pop-to-buffer buf)
     buf))
 
