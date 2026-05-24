@@ -35,6 +35,7 @@
     "k8s-api"
     "k8s-prom"
     "k8s-metrics"
+    "k8s-multilog"
     "k8s-watch"
     "k8s-fs"
     "k8s-fs-ui"

@@ -326,6 +326,27 @@ Nodes are cluster-scoped — there is no namespaced variant."
                 "/api/v1/pods")))
     (cdr (assq 'items (k8s-get conn path)))))
 
+(defun k8s-list-pods-by-selector (conn namespace selector)
+  "List pods in NAMESPACE that match SELECTOR via CONN.
+SELECTOR is an alist of (LABEL-NAME . LABEL-VALUE) — names may be
+strings or symbols.  Returns a list (not a vector) of pod alists,
+or nil when nothing matches / the call fails.
+
+Server-side filtering via the K8s API's `labelSelector' query
+param, so the wire payload only carries matching pods."
+  (let* ((parts (mapcar (lambda (kv)
+                          (let ((k (car kv)) (v (cdr kv)))
+                            (format "%s=%s"
+                                    (if (symbolp k) (symbol-name k) k)
+                                    (if (symbolp v) (symbol-name v) v))))
+                        selector))
+         (sel-str (mapconcat #'identity parts ","))
+         (path (format "/api/v1/namespaces/%s/pods?labelSelector=%s"
+                       namespace (url-hexify-string sel-str))))
+    (condition-case nil
+        (append (cdr (assq 'items (k8s-get conn path))) nil)
+      (error nil))))
+
 (defun k8s-list-deployments (conn &optional namespace)
   "List deployments via CONN, optionally in NAMESPACE."
   (let ((path (if namespace

@@ -101,7 +101,7 @@ metrics buffer for the container.
 | `w` | Toggle live watch (auto-update via the K8s watch API) |
 | `b` | Switch kubeconfig context (same picker as from the dashboard) |
 | `i` | Describe resource |
-| `l` | Tail pod logs (pods view); on a CronJob row, tails the last run's logs (cronjobs view) |
+| `l` | Tail pod logs (pods view); on a Deployment / StatefulSet / DaemonSet / Job / Service, opens a multi-pod tail (each pod colored distinctly); on a CronJob, tails the last run |
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Read-only filesystem browser for the pod (pods view only) |
 | `M` | Per-pod metrics buffer (pods view only) |
@@ -202,6 +202,8 @@ k8s/
   k8s-watch.el           Watch streams on docker-http-stream
   k8s-metrics.el         Usage gauges / sparklines: metrics.k8s.io +
                          kubelet Summary API; per-pod + per-node data
+  k8s-multilog.el        Multi-pod log tail (stern-style): one buffer,
+                         one colour per pod, line-by-line interleaved
   k8s-pods.el            Pods view: phases, restarts, streamed logs,
                          container subsections, inline metrics
   k8s-fs.el / k8s-fs-ui.el  Pod-fs browser

@@ -16,6 +16,7 @@
 (require 'k8s-api)
 (require 'k8s-watch)
 (require 'k8s-metrics)
+(require 'k8s-multilog)
 (require 'k8s-prom)
 
 ;;; ---------------------------------------------------------------------------
@@ -1194,6 +1195,51 @@ the Pod is garbage-collected."
 (keymap-set k8s-cronjobs-mode-map "l" #'k8s-cronjob-view-logs-at-point)
 
 ;;; ---------------------------------------------------------------------------
+;;; Multi-pod log tailing (stern-style)
+;;
+;; `l' on a deployment / statefulset / daemonset / job / service
+;; resolves the workload's pod selector, opens a single
+;; `k8s-multilog' buffer, and tails every pod's logs interleaved.
+;; See docs/multipod-logs-plan.md.
+
+(defun k8s--workload-selector (type resource)
+  "Return the labelSelector alist that picks RESOURCE's pods.
+TYPE is the section symbol (deployment, statefulset, …).  Returns
+nil if the resource has no derivable selector."
+  (let ((spec (cdr (assq 'spec resource))))
+    (pcase type
+      ((or 'deployment 'statefulset 'daemonset 'job)
+       (cdr (assq 'matchLabels (cdr (assq 'selector spec)))))
+      ('service
+       (cdr (assq 'selector spec))))))
+
+(defun k8s--multilog-at-point ()
+  "Tail logs from every pod of the workload section at point.
+Opens a multi-pod log buffer (`k8s-multilog-mode') — see
+`k8s-multilog-start'.  Works on deployments, statefulsets,
+daemonsets, jobs and services."
+  (interactive)
+  (let* ((sec (magit-current-section))
+         (type (and sec (oref sec type)))
+         (resource (and sec (oref sec value))))
+    (unless (memq type '(deployment statefulset daemonset job service))
+      (user-error "Not on a deployment/statefulset/daemonset/job/service"))
+    (let* ((ns (k8s--resource-namespace resource))
+           (name (k8s--resource-name resource))
+           (selector (k8s--workload-selector type resource))
+           (conn (k8s--ensure-connection)))
+      (unless selector
+        (user-error "%s %s/%s has no labelSelector" type ns name))
+      (k8s-multilog-start conn ns selector type name))))
+
+(keymap-set k8s-deployments-mode-map  "l" #'k8s--multilog-at-point)
+(keymap-set k8s-statefulsets-mode-map "l" #'k8s--multilog-at-point)
+(keymap-set k8s-daemonsets-mode-map   "l" #'k8s--multilog-at-point)
+(keymap-set k8s-jobs-mode-map         "l" #'k8s--multilog-at-point)
+;; `services' view's mode-map is defined later in this file — the
+;; binding is set after that macro call.
+
+;;; ---------------------------------------------------------------------------
 ;;; Services
 
 (defun k8s--service-ports-string (svc)
@@ -1244,6 +1290,8 @@ the Pod is garbage-collected."
   #'k8s-list-services
   (format "  %-35s %-15s %-18s %-6s %s\n" "NAME" "TYPE" "CLUSTER-IP" "AGE" "PORTS")
   #'k8s--insert-service-line)
+
+(keymap-set k8s-services-mode-map "l" #'k8s--multilog-at-point)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Ingresses
