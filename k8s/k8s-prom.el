@@ -218,24 +218,45 @@ SAMPLE's `values' is an array of [TIMESTAMP STRINGVAL] arrays."
 ;; every label value against the node name and InternalIP — robust to
 ;; whether the relevant label is `instance', `node', `nodename', ….
 
-(defun k8s-prom--match-node (sample nodes)
-  "Return the node name in NODES that SAMPLE belongs to, or nil.
-NODES is a list of (NAME . INTERNAL-IP) conses.  node-exporter
-labels the host inconsistently across setups, so this matches any
-label value equal to a node name, or equal to / prefixed by an
-InternalIP (covering the common \"IP:9100\" `instance' form)."
-  (let ((metric (cdr (assq 'metric sample))))
+;; Node-matching used to be O(N×L) per sample (dolist NODES × dolist
+;; LABELS).  Now we build two hashes once per node-metrics call —
+;; NAME-SET and IP→NAME — and the per-sample matcher is O(L).  The
+;; hashes live inside one call's lexical scope; they can't go stale
+;; because they're rebuilt from the freshly-fetched node list every
+;; time `k8s-prom-node-metrics' or its async sibling runs.
+
+(defconst k8s-prom--instance-ip-rx
+  "\\`\\([0-9]+\\(?:\\.[0-9]+\\)\\{3\\}\\):[0-9]+\\'"
+  "Matches the common `IP:port' shape of node-exporter's `instance' label.")
+
+(defun k8s-prom--make-matcher (nodes)
+  "Build a label-to-node lookup from NODES (list of (NAME . IP) conses).
+Returns a plist (:names HASH :ips HASH); both map a candidate
+label value to the node NAME it identifies."
+  (let ((names (make-hash-table :test 'equal))
+        (ips   (make-hash-table :test 'equal)))
+    (dolist (nd nodes)
+      (let ((name (car nd)) (ip (cdr nd)))
+        (when name (puthash name name names))
+        (when (and ip (stringp ip)) (puthash ip name ips))))
+    (list :names names :ips ips)))
+
+(defun k8s-prom--match-node (sample matcher)
+  "Return the node name that SAMPLE belongs to, or nil.
+MATCHER comes from `k8s-prom--make-matcher'.  Scans the sample's
+labels and returns the first hit; handles exact `name', exact `IP',
+and the `IP:port' form used by node-exporter's `instance' label."
+  (let ((names (plist-get matcher :names))
+        (ips   (plist-get matcher :ips)))
     (catch 'hit
-      (dolist (nd nodes)
-        (let ((name (car nd)) (ip (cdr nd)))
-          (dolist (lbl metric)
-            (let ((v (cdr lbl)))
-              (when (and (stringp v)
-                         (or (equal v name)
-                             (and ip (stringp ip)
-                                  (or (equal v ip)
-                                      (string-prefix-p (concat ip ":") v)))))
-                (throw 'hit name))))))
+      (dolist (lbl (cdr (assq 'metric sample)))
+        (let ((v (cdr lbl)))
+          (when (stringp v)
+            (when-let ((n (gethash v names))) (throw 'hit n))
+            (when-let ((n (gethash v ips)))   (throw 'hit n))
+            (when (string-match k8s-prom--instance-ip-rx v)
+              (when-let ((n (gethash (match-string 1 v) ips)))
+                (throw 'hit n))))))
       nil)))
 
 (defun k8s-prom--put (table node key value)
@@ -243,19 +264,80 @@ InternalIP (covering the common \"IP:9100\" `instance' form)."
   (when (and node value)
     (puthash node (plist-put (gethash node table) key value) table)))
 
-(defun k8s-prom--collect-instant (conn table nodes key promql)
-  "Run instant PROMQL and fold each node's scalar into TABLE under KEY."
-  (dolist (sample (append (k8s-prom-query conn promql) nil))
-    (k8s-prom--put table (k8s-prom--match-node sample nodes)
+(defun k8s-prom--fold-instant (samples table matcher key)
+  "Fold instant SAMPLES into TABLE under KEY, using MATCHER for node lookup."
+  (seq-doseq (sample (or samples []))
+    (k8s-prom--put table (k8s-prom--match-node sample matcher)
                    key (k8s-prom-sample-value sample))))
 
-(defun k8s-prom--collect-range (conn table nodes key promql start end step)
-  "Run range PROMQL and fold each node's value series into TABLE under KEY."
-  (dolist (sample (append (k8s-prom-query-range conn promql start end step)
-                          nil))
+(defun k8s-prom--fold-range (samples table matcher key)
+  "Fold range SAMPLES into TABLE under KEY, using MATCHER for node lookup."
+  (seq-doseq (sample (or samples []))
     (let ((vals (k8s-prom-range-values sample)))
       (when vals
-        (k8s-prom--put table (k8s-prom--match-node sample nodes) key vals)))))
+        (k8s-prom--put table (k8s-prom--match-node sample matcher) key vals)))))
+
+;; The five PromQL strings used by the node view.  Defined once so the
+;; sync and async paths can't drift.
+(defconst k8s-prom--node-cpu-history-query
+  "1 - avg without (cpu) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))"
+  "Hour-long CPU-utilisation fraction per `instance', from node-exporter.")
+(defconst k8s-prom--node-mem-history-query
+  "1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes"
+  "Hour-long memory-utilisation fraction per `instance', from node-exporter.")
+
+(defun k8s-prom-query-async (conn promql callback)
+  "Async instant PromQL.  CALLBACK receives the result vector or nil."
+  (let ((svc (k8s-prom-service conn)))
+    (if (not svc)
+        (funcall callback nil)
+      (let ((cfg (k8s-connection-docker-cfg conn))
+            (path (k8s-prom--proxy-path
+                   svc (concat "/api/v1/query?query="
+                               (url-hexify-string promql)))))
+        (docker-http-get-async
+         cfg path
+         (lambda (body)
+           (funcall callback
+                    (and body
+                         (let ((resp (ignore-errors
+                                       (json-parse-string
+                                        body
+                                        :object-type 'alist
+                                        :array-type 'array
+                                        :null-object nil
+                                        :false-object :false))))
+                           (and resp
+                                (equal (cdr (assq 'status resp)) "success")
+                                (cdr (assq 'result
+                                           (cdr (assq 'data resp))))))))))))))
+
+(defun k8s-prom-query-range-async (conn promql start end step callback)
+  "Async range PromQL.  CALLBACK receives the result matrix vector or nil."
+  (let ((svc (k8s-prom-service conn)))
+    (if (not svc)
+        (funcall callback nil)
+      (let ((cfg (k8s-connection-docker-cfg conn))
+            (path (k8s-prom--proxy-path
+                   svc (format "/api/v1/query_range?query=%s&start=%d&end=%d&step=%d"
+                               (url-hexify-string promql)
+                               (floor start) (floor end) (max 1 (floor step))))))
+        (docker-http-get-async
+         cfg path
+         (lambda (body)
+           (funcall callback
+                    (and body
+                         (let ((resp (ignore-errors
+                                       (json-parse-string
+                                        body
+                                        :object-type 'alist
+                                        :array-type 'array
+                                        :null-object nil
+                                        :false-object :false))))
+                           (and resp
+                                (equal (cdr (assq 'status resp)) "success")
+                                (cdr (assq 'result
+                                           (cdr (assq 'data resp))))))))))))))
 
 (defun k8s-prom-node-metrics (conn nodes)
   "Collect per-node Prometheus metrics for NODES via CONN.
@@ -265,22 +347,59 @@ and :cpu-hist :mem-hist (hour-long fractional value series for the
 trend sparklines).  Returns nil when Prometheus is unavailable;
 individual keys are simply absent when their series are missing."
   (when (and nodes (k8s-prom-available-p conn))
-    (let ((table (make-hash-table :test 'equal)))
-      (k8s-prom--collect-instant conn table nodes :load1  "node_load1")
-      (k8s-prom--collect-instant conn table nodes :load5  "node_load5")
-      (k8s-prom--collect-instant conn table nodes :load15 "node_load15")
-      (let* ((end (float-time))
-             (start (- end 3600))
-             (step 90))
-        (k8s-prom--collect-range
-         conn table nodes :cpu-hist
-         "1 - avg without (cpu) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m]))"
-         start end step)
-        (k8s-prom--collect-range
-         conn table nodes :mem-hist
-         "1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes"
-         start end step))
+    (let* ((matcher (k8s-prom--make-matcher nodes))
+           (table (make-hash-table :test 'equal))
+           (end (float-time))
+           (start (- end 3600))
+           (step 90)
+           ;; All five queries run in parallel.
+           (results (k8s--fan-out-sync
+                     (list
+                      (lambda (cb) (k8s-prom-query-async conn "node_load1"  cb))
+                      (lambda (cb) (k8s-prom-query-async conn "node_load5"  cb))
+                      (lambda (cb) (k8s-prom-query-async conn "node_load15" cb))
+                      (lambda (cb) (k8s-prom-query-range-async
+                                    conn k8s-prom--node-cpu-history-query
+                                    start end step cb))
+                      (lambda (cb) (k8s-prom-query-range-async
+                                    conn k8s-prom--node-mem-history-query
+                                    start end step cb))))))
+      (k8s-prom--fold-instant (nth 0 results) table matcher :load1)
+      (k8s-prom--fold-instant (nth 1 results) table matcher :load5)
+      (k8s-prom--fold-instant (nth 2 results) table matcher :load15)
+      (k8s-prom--fold-range   (nth 3 results) table matcher :cpu-hist)
+      (k8s-prom--fold-range   (nth 4 results) table matcher :mem-hist)
       table)))
+
+(defun k8s-prom-node-metrics-async (conn nodes callback)
+  "Async variant of `k8s-prom-node-metrics'.
+CALLBACK receives the node-name -> plist hash, or nil when
+Prometheus is unavailable.  Fires all five queries concurrently."
+  (if (or (null nodes) (not (k8s-prom-available-p conn)))
+      (funcall callback nil)
+    (let* ((matcher (k8s-prom--make-matcher nodes))
+           (end (float-time))
+           (start (- end 3600))
+           (step 90))
+      (k8s--fan-out
+       (list
+        (lambda (cb) (k8s-prom-query-async conn "node_load1"  cb))
+        (lambda (cb) (k8s-prom-query-async conn "node_load5"  cb))
+        (lambda (cb) (k8s-prom-query-async conn "node_load15" cb))
+        (lambda (cb) (k8s-prom-query-range-async
+                      conn k8s-prom--node-cpu-history-query
+                      start end step cb))
+        (lambda (cb) (k8s-prom-query-range-async
+                      conn k8s-prom--node-mem-history-query
+                      start end step cb)))
+       (lambda (results)
+         (let ((table (make-hash-table :test 'equal)))
+           (k8s-prom--fold-instant (nth 0 results) table matcher :load1)
+           (k8s-prom--fold-instant (nth 1 results) table matcher :load5)
+           (k8s-prom--fold-instant (nth 2 results) table matcher :load15)
+           (k8s-prom--fold-range   (nth 3 results) table matcher :cpu-hist)
+           (k8s-prom--fold-range   (nth 4 results) table matcher :mem-hist)
+           (funcall callback table)))))))
 
 (provide 'k8s-prom)
 ;;; k8s-prom.el ends here

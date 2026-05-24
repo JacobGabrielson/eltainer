@@ -73,6 +73,25 @@ daemons accept unversioned paths just fine."
         (docker-http-json resp)
       (docker--engine-error resp full))))
 
+(cl-defun docker-engine-get-async (cfg path callback &key query)
+  "Async GET PATH from the engine API.
+CALLBACK receives the decoded JSON (alist) or nil on any failure.
+Mirrors `docker-engine-get' for callers that want to fan out
+multiple GETs concurrently."
+  (let ((full (concat (docker--api-prefix cfg) path)))
+    (docker-http-get-async
+     cfg full
+     (lambda (body)
+       (funcall callback
+                (and body (> (length body) 0)
+                     (ignore-errors
+                       (json-parse-string body
+                                          :object-type 'alist
+                                          :array-type 'list
+                                          :null-object nil
+                                          :false-object :false)))))
+     :query query)))
+
 (cl-defun docker-engine-post (cfg path &key query body json
                                        (accept-statuses '(200 201 204 304)))
   "POST PATH on the engine API.

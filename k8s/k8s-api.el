@@ -148,6 +148,60 @@ the helper exits non-zero, or the JSON is malformed."
   "Perform a GET request to PATH on the K8s API via CONN."
   (k8s--http-json conn "GET" path))
 
+;;; ---------------------------------------------------------------------------
+;;; Async + parallel primitives
+;;
+;; Most K8s operations have always been synchronous: `k8s-get' blocks
+;; on `accept-process-output' until the response is fully buffered.
+;; That's fine for one-shot fetches, but views that need N+1 round-
+;; trips (e.g. kubelet Summary per node, Prometheus query bundle)
+;; serialize those calls on the timer and stall Emacs for seconds.
+;;
+;; The primitives below let those callers fan out independent requests
+;; in parallel and barrier-wait for all to complete (or time out).
+
+;; Concurrency primitives live in `docker-http.el' so the docker
+;; half can share them; alias them under `k8s--' for symmetry with
+;; the existing `k8s--' helpers.
+(defalias 'k8s--fan-out      #'docker-http-fan-out)
+(defalias 'k8s--fan-out-sync #'docker-http-fan-out-sync)
+
+(defun k8s-get-async (conn path callback)
+  "Async GET PATH on CONN.  CALLBACK receives the parsed JSON alist,
+or nil when the request fails or the body is unparseable."
+  (let ((cfg (k8s-connection-docker-cfg conn)))
+    (docker-http-get-async
+     cfg path
+     (lambda (body)
+       (funcall callback
+                (and body (> (length body) 0)
+                     (ignore-errors
+                       (json-parse-string body
+                                          :object-type 'alist
+                                          :array-type 'array
+                                          :null-object nil
+                                          :false-object :false))))))))
+
+(defun k8s-list-pods-async (conn namespace callback)
+  "List pods via CONN asynchronously, optionally in NAMESPACE.
+CALLBACK receives the items vector, or nil on failure."
+  (let ((path (if namespace
+                  (format "/api/v1/namespaces/%s/pods" namespace)
+                "/api/v1/pods")))
+    (k8s-get-async
+     conn path
+     (lambda (json)
+       (funcall callback (and json (cdr (assq 'items json))))))))
+
+(defun k8s-stats-summary-async (conn node callback)
+  "Async wrapper around `k8s-stats-summary'.  CALLBACK receives the
+decoded kubelet Summary alist for NODE, or nil on failure."
+  (k8s-get-async
+   conn
+   (format "/api/v1/nodes/%s/proxy/stats/summary" (url-hexify-string node))
+   callback))
+
+
 (defun k8s-delete (conn path)
   "Perform a DELETE request to PATH on the K8s API via CONN."
   (k8s--http-json conn "DELETE" path))

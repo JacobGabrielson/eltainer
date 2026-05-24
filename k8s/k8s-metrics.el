@@ -181,28 +181,43 @@ when there is nothing to draw."
 ;;; ---------------------------------------------------------------------------
 ;;; Disk + network — kubelet Summary API (phase 2)
 
+(defun k8s-metrics--fold-summary-into-table (summary table)
+  "Merge SUMMARY's per-pod entries into TABLE (NS/POD -> entry)."
+  (seq-doseq (p (or (cdr (assq 'pods summary)) []))
+    (let* ((ref (cdr (assq 'podRef p)))
+           (ns (cdr (assq 'namespace ref)))
+           (nm (cdr (assq 'name ref))))
+      (when (and ns nm)
+        (puthash (format "%s/%s" ns nm) p table)))))
+
 (defun k8s-metrics-collect-summary (conn)
   "Fetch the kubelet Summary API for every node reachable via CONN.
-Returns a hash \"NS/POD\" -> that pod's summary entry alist (it
-carries `network' byte counters and per-container `rootfs' disk
-usage), or nil when the Summary API is unavailable on every node
-\(no `nodes/proxy' RBAC, kubelet unreachable, ...)."
+Returns a hash \"NS/POD\" -> that pod's summary entry alist, or
+nil when the Summary API is unavailable on every node (no
+`nodes/proxy' RBAC, kubelet unreachable, ...).
+
+Per-node requests run in parallel — N nodes finish in roughly the
+slowest one's latency, not N times it."
   (let ((nodes (ignore-errors
-                 (cdr (assq 'items (k8s-get conn "/api/v1/nodes")))))
-        (table (make-hash-table :test 'equal))
-        (any nil))
-    (seq-doseq (node (or nodes []))
-      (let* ((nname (cdr (assq 'name (cdr (assq 'metadata node)))))
-             (summary (and nname (k8s-stats-summary conn nname))))
-        (when summary
-          (setq any t)
-          (seq-doseq (p (cdr (assq 'pods summary)))
-            (let* ((ref (cdr (assq 'podRef p)))
-                   (ns (cdr (assq 'namespace ref)))
-                   (nm (cdr (assq 'name ref))))
-              (when (and ns nm)
-                (puthash (format "%s/%s" ns nm) p table)))))))
-    (and any table)))
+                 (cdr (assq 'items (k8s-get conn "/api/v1/nodes"))))))
+    (when (and nodes (> (length nodes) 0))
+      (let* ((names (delq nil
+                          (mapcar (lambda (n)
+                                    (cdr (assq 'name
+                                               (cdr (assq 'metadata n)))))
+                                  (append nodes nil))))
+             (specs (mapcar (lambda (nname)
+                              (lambda (cb)
+                                (k8s-stats-summary-async conn nname cb)))
+                            names))
+             (summaries (k8s--fan-out-sync specs))
+             (table (make-hash-table :test 'equal))
+             (any nil))
+        (dolist (summary summaries)
+          (when summary
+            (setq any t)
+            (k8s-metrics--fold-summary-into-table summary table)))
+        (and any table)))))
 
 (defun k8s-metrics--summary-container-disk (summary-pod cname)
   "Return CNAME's rootfs used-bytes from SUMMARY-POD, or nil."
@@ -418,37 +433,72 @@ when NET-ENTRY itself is nil."
 ;; in k8s.el (`k8s-nodes' — a magit-section view alongside the other
 ;; resource views).
 
+(defun k8s-metrics--assemble-node-plist (node summary)
+  "Build a per-node metric plist from NODE (the node alist) and SUMMARY
+\(the kubelet Summary API response for that node, or nil)."
+  (let* ((meta (cdr (assq 'metadata node)))
+         (nname (cdr (assq 'name meta)))
+         (alloc (cdr (assq 'allocatable (cdr (assq 'status node)))))
+         (cpu-total (k8s-metrics--parse-cpu (cdr (assq 'cpu alloc))))
+         (mem-total (k8s-metrics--parse-memory (cdr (assq 'memory alloc))))
+         (snode (and summary (cdr (assq 'node summary))))
+         (cpu-nano (and snode (cdr (assq 'usageNanoCores
+                                         (cdr (assq 'cpu snode))))))
+         (mem (and snode (cdr (assq 'memory snode))))
+         (fs (and snode (cdr (assq 'fs snode)))))
+    (list :name nname
+          :cpu-used (and cpu-nano (/ cpu-nano 1e6))
+          :cpu-total cpu-total
+          :mem-used (and mem (cdr (assq 'workingSetBytes mem)))
+          :mem-total mem-total
+          :fs-used (and fs (cdr (assq 'usedBytes fs)))
+          :fs-total (and fs (cdr (assq 'capacityBytes fs))))))
+
+(defun k8s-metrics--specs-for-nodes (conn nodes)
+  "Return fan-out specs that fetch the kubelet Summary for each node in NODES."
+  (let (specs)
+    (seq-doseq (node nodes)
+      (let ((nname (cdr (assq 'name (cdr (assq 'metadata node))))))
+        (push (if nname
+                  (lambda (cb) (k8s-stats-summary-async conn nname cb))
+                ;; Nameless node — no fetch to do; complete immediately.
+                (lambda (cb) (funcall cb nil)))
+              specs)))
+    (nreverse specs)))
+
 (defun k8s-metrics-collect-nodes (conn)
   "Return a list of per-node metric plists via CONN, or nil if unavailable.
 Each plist: :name :cpu-used :cpu-total :mem-used :mem-total
 :fs-used :fs-total.  CPU values are millicores, the rest bytes;
-usage fields are nil when the kubelet Summary API is unavailable."
+usage fields are nil when the kubelet Summary API is unavailable.
+
+Per-node Summary requests run in parallel."
   (let ((nodes (ignore-errors
                  (cdr (assq 'items (k8s-get conn "/api/v1/nodes"))))))
-    (when nodes
-      (let (out)
-        (seq-doseq (node nodes)
-          (let* ((meta (cdr (assq 'metadata node)))
-                 (nname (cdr (assq 'name meta)))
-                 (alloc (cdr (assq 'allocatable (cdr (assq 'status node)))))
-                 (cpu-total (k8s-metrics--parse-cpu (cdr (assq 'cpu alloc))))
-                 (mem-total (k8s-metrics--parse-memory
-                             (cdr (assq 'memory alloc))))
-                 (summary (and nname (k8s-stats-summary conn nname)))
-                 (snode (and summary (cdr (assq 'node summary))))
-                 (cpu-nano (and snode (cdr (assq 'usageNanoCores
-                                                 (cdr (assq 'cpu snode))))))
-                 (mem (and snode (cdr (assq 'memory snode))))
-                 (fs (and snode (cdr (assq 'fs snode)))))
-            (push (list :name nname
-                        :cpu-used (and cpu-nano (/ cpu-nano 1e6))
-                        :cpu-total cpu-total
-                        :mem-used (and mem (cdr (assq 'workingSetBytes mem)))
-                        :mem-total mem-total
-                        :fs-used (and fs (cdr (assq 'usedBytes fs)))
-                        :fs-total (and fs (cdr (assq 'capacityBytes fs))))
-                  out)))
-        (nreverse out)))))
+    (when (and nodes (> (length nodes) 0))
+      (let* ((nlist (append nodes nil))
+             (summaries (k8s--fan-out-sync
+                         (k8s-metrics--specs-for-nodes conn nodes))))
+        (cl-loop for node in nlist
+                 for summary in summaries
+                 collect (k8s-metrics--assemble-node-plist node summary))))))
+
+(defun k8s-metrics-collect-nodes-async (conn nodes callback)
+  "Async variant of `k8s-metrics-collect-nodes' that reuses pre-fetched NODES.
+Fans out the per-node Summary requests in parallel and invokes
+CALLBACK with the assembled list of plists.  When NODES is nil
+the callback fires immediately with nil."
+  (if (or (null nodes) (zerop (length nodes)))
+      (funcall callback nil)
+    (let ((nlist (append nodes nil)))
+      (k8s--fan-out
+       (k8s-metrics--specs-for-nodes conn nodes)
+       (lambda (summaries)
+         (funcall callback
+                  (cl-loop for node in nlist
+                           for summary in summaries
+                           collect (k8s-metrics--assemble-node-plist
+                                    node summary))))))))
 
 (provide 'k8s-metrics)
 ;;; k8s-metrics.el ends here

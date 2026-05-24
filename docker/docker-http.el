@@ -384,6 +384,88 @@ Callbacks:
     (process-send-string proc req)
     proc))
 
+;;; ---------------------------------------------------------------------------
+;;; Parallel-async coordination
+;;
+;; Generic structured-concurrency primitives.  They live here, the
+;; lowest layer both halves of eltainer share, so neither side needs
+;; to depend on the other to fan out N independent HTTP calls.
+
+(defcustom docker-http-parallel-timeout 15
+  "Default seconds `docker-http-fan-out-sync' waits before giving up."
+  :type 'integer
+  :group 'docker)
+
+(defun docker-http-fan-out (specs callback)
+  "Run every spec in SPECS in parallel; call CALLBACK once they all return.
+Each spec is a unary function (LAMBDA (DONE-CB)) that initiates an
+async operation and calls DONE-CB with its result.  CALLBACK
+receives a list of results in the same order as SPECS.
+Returns immediately."
+  (let* ((n (length specs))
+         (results (make-vector n nil))
+         (counter (cons n nil)))
+    (if (zerop n)
+        (funcall callback nil)
+      (cl-loop for spec in specs
+               for i from 0
+               do (let ((idx i))
+                    (funcall spec
+                             (lambda (result)
+                               (aset results idx result)
+                               (cl-decf (car counter))
+                               (when (zerop (car counter))
+                                 (funcall callback
+                                          (append results nil))))))))))
+
+(defun docker-http-fan-out-sync (specs &optional timeout)
+  "Run SPECS in parallel and block until all return (or TIMEOUT lapses).
+Returns the list of results in SPECS order.  TIMEOUT defaults to
+`docker-http-parallel-timeout'; on timeout, returns whatever has
+been collected so far with trailing nils for missing slots.
+
+Despite blocking, the ops do run concurrently — N HTTP calls
+finish in roughly the slowest one's latency, not N times it."
+  (let ((done nil)
+        (results nil))
+    (docker-http-fan-out specs
+                         (lambda (rs) (setq results rs done t)))
+    (let ((deadline (+ (float-time) (or timeout docker-http-parallel-timeout))))
+      (while (and (not done) (< (float-time) deadline))
+        (accept-process-output nil 0.05)))
+    results))
+
+(cl-defun docker-http-get-async (cfg path callback &key query)
+  "Send GET PATH against CFG asynchronously.
+Invokes CALLBACK with the response body as a *string*, or with nil
+on any failure (non-2xx, malformed framing, connection error).
+QUERY is the same alist `docker-http-stream' accepts.
+
+This is the lowest-level async primitive — higher layers (k8s, prom)
+wrap it to parse JSON, build their own URLs, and fan out N calls in
+parallel.  Under the hood it goes through `docker-http-stream' and
+collects chunks into a list, joining once on close (avoids the
+O(n²) of `(concat acc bytes)' on every chunk)."
+  (let* ((chunks nil)
+         (failed nil)
+         (fired nil)
+         (finish (lambda ()
+                   (unless fired
+                     (setq fired t)
+                     (funcall callback
+                              (and (not failed) chunks
+                                   (apply #'concat (nreverse chunks))))))))
+    (condition-case _err
+        (docker-http-stream
+         cfg "GET" path
+         :query query
+         :on-headers (lambda (status _reason _hs)
+                       (unless (and (>= status 200) (< status 300))
+                         (setq failed t)))
+         :on-chunk (lambda (bytes) (unless failed (push bytes chunks)))
+         :on-close finish)
+      (error (funcall callback nil)))))
+
 (defun docker-http-ok-p (response)
   "Return non-nil when RESPONSE is a 2xx status."
   (let ((s (docker-http-response-status response)))

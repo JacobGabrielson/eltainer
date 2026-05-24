@@ -45,18 +45,37 @@
              data))))
 
 (defun docker-inspect-networks (cfg names)
-  "Inspect networks NAMES one-by-one.  Returns a list of `docker-network-detail'.
-The CLI's `network inspect a b c' batched-up call has no direct engine
-analogue; we issue one /networks/{name} request per name."
+  "Inspect networks NAMES in parallel.  Returns a list of
+`docker-network-detail' (same order as NAMES; nil entries dropped).
+
+The Docker Engine `/networks' list endpoint omits the `Containers'
+field, so a per-network `/networks/{id}' GET is the only way to
+get the connected-containers detail.  Each call is independent —
+fan them out via `docker-http-fan-out-sync' instead of the old
+serial loop, turning N×latency into one round-trip's worth."
   (when names
-    (delq nil
-          (mapcar (lambda (name)
-                    (let ((data (condition-case nil
-                                    (docker-engine-get
-                                     cfg (format "/networks/%s" name))
-                                  (docker-api-error nil))))
-                      (and data (docker--network-detail-from-json data))))
-                  names))))
+    (let* ((prefix (docker--api-prefix cfg))
+           (specs (mapcar
+                   (lambda (name)
+                     (let ((path (concat prefix (format "/networks/%s" name))))
+                       (lambda (cb)
+                         (docker-http-get-async
+                          cfg path
+                          (lambda (body)
+                            (funcall cb
+                                     (and body (> (length body) 0)
+                                          (ignore-errors
+                                            (json-parse-string
+                                             body
+                                             :object-type 'alist
+                                             :array-type 'list
+                                             :null-object nil
+                                             :false-object :false)))))))))
+                   names))
+           (raws (docker-http-fan-out-sync specs)))
+      (delq nil
+            (mapcar (lambda (d) (and d (docker--network-detail-from-json d)))
+                    raws)))))
 
 (defun docker-inspect-network-json (cfg name)
   "Return the raw /networks/NAME alist (for the inspect view)."

@@ -1580,24 +1580,39 @@ of pods scheduled on it."
       (k8s--insert-node-details node metrics prom pod-count))))
 
 (defun k8s--nodes-refresh ()
-  "Re-fetch and re-render the nodes buffer."
+  "Re-fetch and re-render the nodes buffer.
+
+The three independent fetches after the initial node list — pods (for
+scheduled-count), per-node kubelet Summary (CPU/mem/fs gauges), and
+the Prometheus query bundle (load avgs + history) — run *in parallel*
+via `k8s--fan-out-sync'.  On a 10-node cluster this turns ~4–6 sync
+round-trips into one parallel batch, dropping the 30 s tick from
+seconds of UI-blocking to one round-trip's worth."
   (let* ((inhibit-read-only t)
          (ctx (k8s--save-point-context))
          (conn (k8s--ensure-connection))
          (nodes (k8s-list-nodes conn))
-         (metrics (let ((h (make-hash-table :test 'equal)))
-                    (dolist (m (k8s-metrics-collect-nodes conn))
-                      (puthash (plist-get m :name) m h))
-                    h))
-         (pod-counts (k8s--nodes-pod-counts
-                      (ignore-errors (k8s-list-pods conn))))
          (node-ips (let (out)
                      (seq-doseq (n nodes)
                        (push (cons (k8s--resource-name n)
                                    (k8s--node-address n "InternalIP"))
                              out))
                      (nreverse out)))
-         (prom (k8s-prom-node-metrics conn node-ips)))
+         (results (k8s--fan-out-sync
+                   (list
+                    (lambda (cb) (k8s-list-pods-async conn nil cb))
+                    (lambda (cb) (k8s-metrics-collect-nodes-async
+                                  conn nodes cb))
+                    (lambda (cb) (k8s-prom-node-metrics-async
+                                  conn node-ips cb)))))
+         (pods (nth 0 results))
+         (metrics-list (nth 1 results))
+         (prom (nth 2 results))
+         (metrics (let ((h (make-hash-table :test 'equal)))
+                    (dolist (m metrics-list)
+                      (puthash (plist-get m :name) m h))
+                    h))
+         (pod-counts (k8s--nodes-pod-counts pods)))
     (unless k8s--nodes-cm-history
       (setq k8s--nodes-cm-history (make-hash-table :test 'equal)))
     (erase-buffer)
