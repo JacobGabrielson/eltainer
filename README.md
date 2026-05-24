@@ -102,6 +102,8 @@ metrics buffer for the container.
 | `b` | Switch kubeconfig context (same picker as from the dashboard) |
 | `i` | Describe resource |
 | `l` | Tail pod logs (pods view); on a Deployment / StatefulSet / DaemonSet / Job / Service, opens a multi-pod tail (each pod colored distinctly); on a CronJob, tails the last run |
+| `m` / `u` / `U` / `t` / `DEL` | dired-style marks: mark / unmark / unmark-all / toggle / unmark-backward (works in any view) |
+| `L` | Multipod tail of every marked pod (pods view) |
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Read-only filesystem browser for the pod (pods view only) |
 | `M` | Per-pod metrics buffer (pods view only) |
@@ -200,6 +202,7 @@ k8s/
   k8s-api.el             REST client (thin wrapper over docker-http)
   k8s-prom.el            Prometheus client via the API service proxy
   k8s-watch.el           Watch streams on docker-http-stream
+  k8s-marks.el           Dired-style marks (m/u/U/t/DEL) for any view
   k8s-metrics.el         Usage gauges / sparklines: metrics.k8s.io +
                          kubelet Summary API; per-pod + per-node data
   k8s-multilog.el        Multi-pod log tail (stern-style): one buffer,

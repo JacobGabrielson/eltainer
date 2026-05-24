@@ -34,6 +34,7 @@
   '("k8s-config"
     "k8s-api"
     "k8s-prom"
+    "k8s-marks"
     "k8s-metrics"
     "k8s-multilog"
     "k8s-watch"

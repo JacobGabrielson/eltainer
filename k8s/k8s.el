@@ -15,6 +15,7 @@
 (require 'k8s-config)
 (require 'k8s-api)
 (require 'k8s-watch)
+(require 'k8s-marks)
 (require 'k8s-metrics)
 (require 'k8s-multilog)
 (require 'k8s-prom)
@@ -242,6 +243,9 @@ since a timer refresh fires no `post-command-hook'."
   ;; magit re-creates sections in their HIDE-arg state, so without
   ;; this every refresh re-collapses whatever the user expanded.
   (k8s--show-sections-by-ids (plist-get ctx :expanded))
+  ;; Re-decorate marks (see k8s-marks.el) — overlays don't survive
+  ;; an `erase-buffer', but the marked UIDs do.
+  (k8s--marks-reapply)
   (let ((id (plist-get ctx :id))
         (offset (plist-get ctx :offset))
         (line (plist-get ctx :line))
@@ -601,7 +605,13 @@ k8s-themed heading face."
   "b" #'eltainer-switch-kubeconfig
   "?" #'k8s-dispatch
   "g" #'revert-buffer
-  "q" #'quit-window)
+  "q" #'quit-window
+  ;; dired-style marks (see k8s-marks.el)
+  "m"   #'k8s-mark
+  "u"   #'k8s-unmark
+  "U"   #'k8s-unmark-all
+  "t"   #'k8s-toggle-marks
+  "DEL" #'k8s-unmark-backward)
 
 ;; `eltainer-switch-kubeconfig' lives in the top-level eltainer.el so
 ;; both the dashboard and the k8s views can call it.  Autoload so we

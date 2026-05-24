@@ -497,6 +497,27 @@ TAIL-LINES bounds the initial history (default 500)."
   (setq-local truncate-lines nil)
   (add-hook 'kill-buffer-hook #'k8s--log-cleanup nil t))
 
+;; Defined in k8s-marks.el / k8s-multilog.el (k8s requires them).
+(declare-function k8s--marked-resources         "k8s-marks")
+(declare-function k8s-multilog-start-with-pods  "k8s-multilog")
+
+(defun k8s-pods-multilog-marked ()
+  "Tail logs from every marked pod in a single multilog buffer.
+Mark pods with `m'; `L' here aggregates them into one
+`*k8s:multilog:*' buffer with per-pod colour-coded prefixes.
+Marked pods may span namespaces — each prefix carries the pod's
+own namespace."
+  (interactive)
+  (unless (derived-mode-p 'k8s-pods-mode)
+    (user-error "Not in a pods buffer"))
+  (let ((marked (k8s--marked-resources)))
+    (unless marked
+      (user-error "No pods marked — `m' marks the pod at point"))
+    (let ((conn (k8s--ensure-connection)))
+      (k8s-multilog-start-with-pods
+       conn marked 'marked
+       (format "%d-pods" (length marked))))))
+
 (defun k8s--open-pod-log-buffer (conn ns pod-name container)
   "Open a streaming-logs buffer for NS/POD-NAME[CONTAINER] via CONN.
 Shared entry point for the pods view's `l' and the CronJobs view's
@@ -620,6 +641,7 @@ covers every container in the pod either way."
 (keymap-set k8s-pods-mode-map "e" #'k8s-pod-exec-at-point)
 (keymap-set k8s-pods-mode-map "f" #'k8s-pod-browse-at-point)
 (keymap-set k8s-pods-mode-map "M" #'k8s-pod-metrics-at-point)
+(keymap-set k8s-pods-mode-map "L" #'k8s-pods-multilog-marked)
 
 (define-derived-mode k8s-pods-mode magit-section-mode "K8s:Pods"
   "Major mode for viewing Kubernetes pods.

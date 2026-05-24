@@ -226,9 +226,13 @@ moved yet."
       (push (list prefix face line) k8s-multilog--paused-queue)
     (k8s-multilog--insert-line prefix face line)))
 
-(defun k8s-multilog--padded-prefix (pod-name)
-  "Return the column-aligned `[NS/POD]' prefix string."
-  (let* ((bare (format "[%s/%s]" k8s-multilog--ns pod-name))
+(defun k8s-multilog--padded-prefix (pod)
+  "Return the column-aligned `[ns/pod]' prefix string for POD.
+Reads the pod's own metadata.namespace so marked-pod sets can
+span namespaces and still produce honest prefixes."
+  (let* ((bare (format "[%s/%s]"
+                       (k8s--resource-namespace pod)
+                       (k8s--resource-name pod)))
          (pad (max 0 (- k8s-multilog--prefix-width (length bare)))))
     (concat bare (make-string pad ?\s))))
 
@@ -236,10 +240,10 @@ moved yet."
   "Open the follow stream for POD, recording its (proc . splitter) pair."
   (let* ((conn k8s-multilog--conn)
          (cfg (k8s-connection-docker-cfg conn))
-         (ns k8s-multilog--ns)
+         (ns (k8s--resource-namespace pod))   ; per-pod, not buffer-wide
          (pod-name (k8s--resource-name pod))
          (container (k8s-multilog--first-container pod))
-         (prefix (k8s-multilog--padded-prefix pod-name))
+         (prefix (k8s-multilog--padded-prefix pod))
          (face (k8s-multilog--face-for-slot slot))
          (buf (current-buffer))
          (splitter
@@ -270,13 +274,16 @@ moved yet."
 
 (defun k8s-multilog--start-all-streams ()
   "Open one stream per pod in `k8s-multilog--pods'.
-Computes the shared prefix-width so the column stays aligned."
+Computes the shared prefix-width across all pods (so the column
+stays aligned even when pods span multiple namespaces)."
   (setq k8s-multilog--pod-slots (make-hash-table :test 'equal))
   (setq k8s-multilog--processes nil)
-  (let* ((names (mapcar #'k8s--resource-name k8s-multilog--pods))
-         (max-name (apply #'max 0 (mapcar #'length names)))
-         (ns-width (1+ (length (or k8s-multilog--ns ""))))
-         (width (+ 2 ns-width max-name)))  ; `[ns/name]'
+  (let* ((bares (mapcar (lambda (p)
+                          (format "[%s/%s]"
+                                  (k8s--resource-namespace p)
+                                  (k8s--resource-name p)))
+                        k8s-multilog--pods))
+         (width (apply #'max 0 (mapcar #'length bares))))
     (setq k8s-multilog--prefix-width width))
   (let ((slot 1))
     (dolist (pod k8s-multilog--pods)
@@ -370,6 +377,33 @@ Returns the (possibly truncated) pod list, or nil if the user cancels."
           (?f (seq-take pods cap))
           (?n nil)))))))
 
+(defun k8s-multilog--open (conn ns kind name pods)
+  "Internal entry point: open the multilog buffer for the given POD list.
+Both `k8s-multilog-start' (selector-based) and
+`k8s-multilog-start-with-pods' (explicit list) funnel through
+here so behaviour stays in sync."
+  (let ((pods (k8s-multilog--cap-pods pods kind name)))
+    (when pods
+      (let ((buf (get-buffer-create
+                  (format "*k8s:multilog:%s/%s/%s*" kind ns name))))
+        (with-current-buffer buf
+          (k8s-multilog-mode)
+          (setq k8s-multilog--conn conn
+                k8s-multilog--ns ns
+                k8s-multilog--kind kind
+                k8s-multilog--name name
+                k8s-multilog--pods pods
+                k8s-multilog--paused nil
+                k8s-multilog--paused-queue nil)
+          (let ((inhibit-read-only t)) (erase-buffer))
+          (k8s-multilog--write-header)
+          (k8s-multilog--start-all-streams)
+          (goto-char (point-max)))     ; park at tail so auto-scroll engages
+        (pop-to-buffer buf)
+        (with-current-buffer buf (k8s-multilog--goto-tail))
+        (message "k8s multilog: tailing %d pod%s — g restart, p pause, c clear, q quit"
+                 (length pods) (if (= 1 (length pods)) "" "s"))))))
+
 ;;;###autoload
 (defun k8s-multilog-start (conn ns selector kind name)
   "Open a multi-pod log tail buffer.
@@ -377,30 +411,24 @@ CONN is the K8s connection; NS the namespace; SELECTOR an alist
 of label-matchers (e.g. `((app . \"foo\"))'); KIND a symbol
 \(deployment/statefulset/...) used for the buffer name and header;
 NAME the workload's resource name."
-  (let* ((all-pods (k8s-list-pods-by-selector conn ns selector)))
-    (unless (and all-pods (> (length all-pods) 0))
+  (let ((pods (k8s-list-pods-by-selector conn ns selector)))
+    (unless (and pods (> (length pods) 0))
       (user-error "No pods match selector for %s %s/%s" kind ns name))
-    (let ((pods (k8s-multilog--cap-pods all-pods kind name)))
-      (when pods
-        (let ((buf (get-buffer-create
-                    (format "*k8s:multilog:%s/%s/%s*" kind ns name))))
-          (with-current-buffer buf
-            (k8s-multilog-mode)
-            (setq k8s-multilog--conn conn
-                  k8s-multilog--ns ns
-                  k8s-multilog--kind kind
-                  k8s-multilog--name name
-                  k8s-multilog--pods pods
-                  k8s-multilog--paused nil
-                  k8s-multilog--paused-queue nil)
-            (let ((inhibit-read-only t)) (erase-buffer))
-            (k8s-multilog--write-header)
-            (k8s-multilog--start-all-streams)
-            (goto-char (point-max)))     ; park at tail so auto-scroll engages
-          (pop-to-buffer buf)
-          (with-current-buffer buf (k8s-multilog--goto-tail))
-          (message "k8s multilog: tailing %d pod%s — g restart, p pause, c clear, q quit"
-                   (length pods) (if (= 1 (length pods)) "" "s")))))))
+    (k8s-multilog--open conn ns kind name pods)))
+
+;;;###autoload
+(defun k8s-multilog-start-with-pods (conn pods kind name)
+  "Open a multi-pod log tail buffer for an explicit POD list.
+NS for the buffer name is derived from the pods themselves —
+all-in-one-namespace uses that ns; mixed namespaces fall back to
+the literal string \"mixed\".  Per-pod prefixes always carry each
+pod's true namespace either way."
+  (unless (and pods (> (length pods) 0))
+    (user-error "No pods supplied to k8s-multilog-start-with-pods"))
+  (let* ((namespaces (delete-dups
+                      (mapcar #'k8s--resource-namespace pods)))
+         (ns (if (= 1 (length namespaces)) (car namespaces) "mixed")))
+    (k8s-multilog--open conn ns kind name pods)))
 
 (provide 'k8s-multilog)
 ;;; k8s-multilog.el ends here
