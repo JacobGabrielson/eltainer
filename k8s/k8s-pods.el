@@ -486,6 +486,22 @@ TAIL-LINES bounds the initial history (default 500)."
   (setq-local truncate-lines nil)
   (add-hook 'kill-buffer-hook #'k8s--log-cleanup nil t))
 
+(defun k8s--open-pod-log-buffer (conn ns pod-name container)
+  "Open a streaming-logs buffer for NS/POD-NAME[CONTAINER] via CONN.
+Shared entry point for the pods view's `l' and the CronJobs view's
+last-run-logs action."
+  (let ((buf (get-buffer-create
+              (format "*k8s:logs:%s/%s[%s]*" ns pod-name container))))
+    (with-current-buffer buf
+      (k8s-log-mode)
+      (setq k8s--log-conn conn
+            k8s--log-ns ns
+            k8s--log-pod pod-name
+            k8s--log-container container)
+      (k8s--log-start))
+    (pop-to-buffer buf)
+    (message "Streaming %s/%s[%s] — g=restart, q=quit" ns pod-name container)))
+
 (defun k8s-pod-view-logs ()
   "Show tailing logs for the pod at point.
 With point on a container subsection (inside an expanded pod), logs
@@ -493,26 +509,16 @@ that container directly; on the pod line, picks a container."
   (interactive)
   (let* ((target (k8s--pod+container-at-point))
          (pod (car target))
-         (preselected (cdr target)))
-    (let* ((name (k8s--resource-name pod))
-           (ns (k8s--resource-namespace pod))
-           (containers (k8s--pod-container-names pod))
-           (container (or preselected
-                          (and containers
-                               (k8s--read-pod-container "Logs for" ns name
-                                                        pod containers))))
-           (conn (k8s--ensure-connection))
-           (buf (get-buffer-create
-                 (format "*k8s:logs:%s/%s[%s]*" ns name container))))
-      (with-current-buffer buf
-        (k8s-log-mode)
-        (setq k8s--log-conn conn
-              k8s--log-ns ns
-              k8s--log-pod name
-              k8s--log-container container)
-        (k8s--log-start))
-      (pop-to-buffer buf)
-      (message "Streaming %s/%s[%s] — g=restart, q=quit" ns name container))))
+         (preselected (cdr target))
+         (name (k8s--resource-name pod))
+         (ns (k8s--resource-namespace pod))
+         (containers (k8s--pod-container-names pod))
+         (container (or preselected
+                        (and containers
+                             (k8s--read-pod-container "Logs for" ns name
+                                                      pod containers))))
+         (conn (k8s--ensure-connection)))
+    (k8s--open-pod-log-buffer conn ns name container)))
 
 (defun k8s-pod-browse-at-point ()
   "Open a read-only filesystem browser for the pod at point.

@@ -101,7 +101,7 @@ metrics buffer for the container.
 | `w` | Toggle live watch (auto-update via the K8s watch API) |
 | `b` | Switch kubeconfig context (same picker as from the dashboard) |
 | `i` | Describe resource |
-| `l` | Tail pod logs (streamed) |
+| `l` | Tail pod logs (pods view); on a CronJob row, tails the last run's logs (cronjobs view) |
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Read-only filesystem browser for the pod (pods view only) |
 | `M` | Per-pod metrics buffer (pods view only) |

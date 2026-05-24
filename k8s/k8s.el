@@ -131,26 +131,76 @@ on the same row instead of jumping to the top."
    ((stringp value) (concat "ns:" value))    ; namespace group header
    ((listp value)   (k8s--resource-uid value))))
 
+(defun k8s--collect-expanded-section-ids ()
+  "Return stable IDs of every currently-visible (expanded) section.
+A refresh re-inserts sections in their HIDE-arg state, so `magit'
+re-collapses anything the user had `TAB'-expanded.  This snapshot
+lets the restore re-expand them."
+  (let (out seen)
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((sec (get-text-property (point) 'magit-section)))
+          (when (and sec (not (memq sec seen))
+                     (not (eq (ignore-errors (oref sec hidden)) t)))
+            (push sec seen)
+            (when-let ((id (k8s--section-stable-id
+                            (ignore-errors (oref sec value)))))
+              (push id out))))
+        (forward-line 1)))
+    (nreverse out)))
+
+(defun k8s--show-sections-by-ids (ids)
+  "Re-expand any section whose stable ID is in IDS."
+  (when ids
+    (save-excursion
+      (goto-char (point-min))
+      (let (seen)
+        (while (not (eobp))
+          (let ((sec (get-text-property (point) 'magit-section)))
+            (when (and sec (not (memq sec seen)))
+              (push sec seen)
+              (when-let ((id (k8s--section-stable-id
+                              (ignore-errors (oref sec value)))))
+                (when (member id ids)
+                  (ignore-errors (magit-section-show sec))))))
+          (forward-line 1))))))
+
 (defun k8s--save-point-context ()
-  "Capture point + scroll state so a refresh can restore the same row.
-Reads the *window's* point when the buffer is displayed — a refresh
-runs from a timer, and the buffer's own `point' can lag what the
-user actually sees in the window."
+  "Capture point + scroll + section state across a refresh.
+A refresh runs from a timer or `g'; the buffer's own `point' can
+lag what the user actually sees, so this reads the window's
+point.  Also records the line offset within the section under
+point and the stable IDs of every currently-expanded section,
+so the restore lands on the same line of the same section even
+when the user was inside an expanded body."
   (let* ((win (get-buffer-window (current-buffer) t))
          (pos (if win (window-point win) (point)))
          (sec (save-excursion (goto-char pos) (magit-current-section)))
-         (val (and sec (ignore-errors (oref sec value)))))
+         (val (and sec (ignore-errors (oref sec value))))
+         (sec-start (and sec (ignore-errors (oref sec start))))
+         (offset (and sec-start
+                      (- (line-number-at-pos pos)
+                         (line-number-at-pos sec-start)))))
     (list :id        (k8s--section-stable-id val)
+          :offset    (max 0 (or offset 0))
           :line      (line-number-at-pos pos)
-          :win-start (and win (window-start win)))))
+          :win-start (and win (window-start win))
+          :expanded  (k8s--collect-expanded-section-ids))))
 
 (defun k8s--restore-point-context (ctx)
   "Re-seek to the section matching CTX (from `k8s--save-point-context').
-Restores point, the window's point, and — when still in range — the
-window's scroll position, so a timer-driven refresh (events, watch,
-metrics poll) doesn't jump the buffer.  Also re-runs the hl-line
-overlay, since a timer refresh fires no `post-command-hook'."
+Restores point, the line offset within its section, the window's
+point, and — when still in range — the window's scroll position,
+so a timer-driven refresh (events, watch, metrics poll) doesn't
+jump the buffer.  Also re-expands any section the user had
+expanded before the refresh, and re-runs the hl-line overlay
+since a timer refresh fires no `post-command-hook'."
+  ;; magit re-creates sections in their HIDE-arg state, so without
+  ;; this every refresh re-collapses whatever the user expanded.
+  (k8s--show-sections-by-ids (plist-get ctx :expanded))
   (let ((id (plist-get ctx :id))
+        (offset (plist-get ctx :offset))
         (line (plist-get ctx :line))
         (win-start (plist-get ctx :win-start))
         target)
@@ -166,7 +216,13 @@ overlay, since a timer refresh fires no `post-command-hook'."
                   (setq target (point))))))
           (forward-line 1))))
     (cond
-     (target (goto-char target))
+     (target (goto-char target)
+             ;; Re-apply the in-section line offset so the cursor
+             ;; doesn't pop up to the section's heading after every
+             ;; refresh.
+             (when (and offset (> offset 0))
+               (forward-line offset)
+               (beginning-of-line)))
      (line   (goto-char (point-min))
              (forward-line (max 0 (1- line))))
      (t      (goto-char (point-min))))
@@ -789,6 +845,11 @@ where the cursor is."
    ("e" "Exec"       k8s-pod-exec-at-point)
    ("f" "Browse fs"  k8s-pod-browse-at-point)
    ("M" "Metrics"    k8s-pod-metrics-at-point)]
+  [:if (lambda () (k8s--point-on-p 'cronjob))
+   "CronJob at point"
+   ("l" "Logs (last run)" k8s-cronjob-view-logs-at-point)
+   ("i" "Describe"        k8s-describe)
+   ("d" "Delete"          k8s-delete-at-point)]
   [:if k8s--point-on-resource-p
    "Resource at point"
    ("i" "Describe"   k8s-describe)
@@ -1005,6 +1066,90 @@ where the cursor is."
   #'k8s-list-cronjobs
   (format "  %-35s %-18s %-10s %-8s %s\n" "NAME" "SCHEDULE" "SUSPEND" "ACTIVE" "LAST")
   #'k8s--insert-cronjob-line)
+
+;; `l' from a cronjob row tails the logs of the most recent run.
+(declare-function k8s--open-pod-log-buffer "k8s-pods")
+(declare-function k8s--pod-container-names "k8s-pods")
+
+(defun k8s--cronjob-latest-pod (conn ns cronjob-name)
+  "Return (NAMESPACE . POD-NAME) for the latest pod of CRONJOB-NAME's
+most recent Job, via CONN.  Returns nil when no matching Job or Pod
+is found.  Done client-side: the K8s API has no field-selector for
+`ownerReferences', and label-based filtering would miss Jobs whose
+pods were renamed."
+  (let* ((all-jobs (k8s-list-jobs conn ns))
+         (jobs (cl-remove-if-not
+                (lambda (j)
+                  (seq-some
+                   (lambda (o)
+                     (and (equal (cdr (assq 'kind o)) "CronJob")
+                          (equal (cdr (assq 'name o)) cronjob-name)))
+                   (or (cdr (assq 'ownerReferences
+                                  (cdr (assq 'metadata j))))
+                       [])))
+                (append all-jobs nil)))
+         (jobs (sort jobs
+                     (lambda (a b)
+                       (string>
+                        (or (cdr (assq 'creationTimestamp
+                                       (cdr (assq 'metadata a)))) "")
+                        (or (cdr (assq 'creationTimestamp
+                                       (cdr (assq 'metadata b)))) "")))))
+         (latest-job (car jobs))
+         (job-name (and latest-job (k8s--resource-name latest-job))))
+    (when job-name
+      (let* ((all-pods (k8s-list-pods conn ns))
+             (pods (cl-remove-if-not
+                    (lambda (p)
+                      (seq-some
+                       (lambda (o)
+                         (and (equal (cdr (assq 'kind o)) "Job")
+                              (equal (cdr (assq 'name o)) job-name)))
+                       (or (cdr (assq 'ownerReferences
+                                      (cdr (assq 'metadata p))))
+                           [])))
+                    (append all-pods nil)))
+             (pods (sort pods
+                         (lambda (a b)
+                           (string>
+                            (or (cdr (assq 'creationTimestamp
+                                           (cdr (assq 'metadata a)))) "")
+                            (or (cdr (assq 'creationTimestamp
+                                           (cdr (assq 'metadata b)))) ""))))))
+        (when (car pods)
+          (cons ns (k8s--resource-name (car pods))))))))
+
+(defun k8s-cronjob-view-logs-at-point ()
+  "Tail the logs of the most recent run of the CronJob at point.
+Walks CronJob -> most recent owned Job -> most recent owned Pod
+and opens its log stream (first container).  Useful even after
+the Pod has completed — the kubelet keeps log files around until
+the Pod is garbage-collected."
+  (interactive)
+  (require 'k8s-pods)
+  (let ((sec (magit-current-section)))
+    (unless (and sec (eq (oref sec type) 'cronjob))
+      (user-error "Not on a cronjob"))
+    (let* ((cj (oref sec value))
+           (ns (k8s--resource-namespace cj))
+           (name (k8s--resource-name cj))
+           (conn (k8s--ensure-connection))
+           (latest (k8s--cronjob-latest-pod conn ns name)))
+      (unless latest
+        (user-error "No completed runs found for CronJob %s/%s" ns name))
+      (let* ((pod-name (cdr latest))
+             (pod (k8s-get-resource
+                   conn (format "/api/v1/namespaces/%s/pods/%s"
+                                ns pod-name)))
+             (containers (k8s--pod-container-names pod))
+             (container (car containers)))
+        (unless container
+          (user-error "No containers in pod %s/%s" ns pod-name))
+        (message "eltainer: tailing %s/%s[%s] (last run of CronJob %s)"
+                 ns pod-name container name)
+        (k8s--open-pod-log-buffer conn ns pod-name container)))))
+
+(keymap-set k8s-cronjobs-mode-map "l" #'k8s-cronjob-view-logs-at-point)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Services
