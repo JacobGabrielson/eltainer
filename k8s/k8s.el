@@ -500,7 +500,7 @@ k8s-themed heading face."
            (name (cdr (assq 'name meta)))
            (ns (cdr (assq 'namespace meta)))
            (conn (k8s--ensure-connection)))
-      (unless (cdr (assq type k8s--resource-api-paths))
+      (unless (gethash type k8s--resource-api-paths-hash)
         (user-error "Don't know how to delete %s" type))
       (when (yes-or-no-p (format "Delete %s %s/%s? " type ns name))
         (message "eltainer: deleting %s %s/%s ..." type ns name)

@@ -232,9 +232,27 @@ decoded kubelet Summary alist for NODE, or nil on failure."
   "Alist mapping resource types (plural) to (ALL-PATH NAMESPACED-PATH-TEMPLATE).
 Keys are plural to match `k8s--define-view's macro name convention.")
 
+(defvar k8s--list-api-paths-hash nil
+  "Hash-table index of `k8s--list-api-paths' for O(1) lookup.
+Built at load time by `k8s--rebuild-path-hashes'; the alist
+above remains the source of truth.")
+
+(defvar k8s--resource-api-paths-hash nil
+  "Hash-table index of `k8s--resource-api-paths' (see above).")
+
+(defun k8s--rebuild-path-hashes ()
+  "Re-index the path alists into hash tables.
+Run at load time, and again if either alist is ever mutated at
+runtime (which today it isn't — but the indirection keeps the
+two forms in sync without a per-render `assq')."
+  (let ((lh (make-hash-table :test 'eq :size 32)))
+    (dolist (entry k8s--list-api-paths)
+      (puthash (car entry) (cdr entry) lh))
+    (setq k8s--list-api-paths-hash lh)))
+
 (defun k8s--list-path (type &optional namespace)
   "Return the API list path for resource TYPE, optionally in NAMESPACE."
-  (let ((entry (cdr (assq type k8s--list-api-paths))))
+  (let ((entry (gethash type k8s--list-api-paths-hash)))
     (if namespace
         (format (cadr entry) namespace)
       (car entry))))
@@ -255,10 +273,17 @@ Keys are plural to match `k8s--define-view's macro name convention.")
 
 (defun k8s-delete-resource (conn type namespace name)
   "Delete resource of TYPE named NAME in NAMESPACE via CONN."
-  (let ((template (cdr (assq type k8s--resource-api-paths))))
+  (let ((template (gethash type k8s--resource-api-paths-hash)))
     (unless template
       (error "Don't know how to delete %s" type))
     (k8s-delete conn (format template namespace name))))
+
+;; Finish wiring up the hash indices now that both alists are defined.
+(let ((rh (make-hash-table :test 'eq :size 32)))
+  (dolist (entry k8s--resource-api-paths)
+    (puthash (car entry) (cdr entry) rh))
+  (setq k8s--resource-api-paths-hash rh))
+(k8s--rebuild-path-hashes)
 
 (defun k8s-get-text (conn path)
   "Perform a GET request to PATH on the K8s API via CONN.
