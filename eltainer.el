@@ -383,36 +383,65 @@ Returns the count cancelled."
 (declare-function docker-events-stop      "docker-events")
 (declare-function docker-events--running-p "docker-events")
 
-;;;###autoload
-(defun eltainer-stop-all (&optional include-exec)
-  "Shut down every eltainer watcher.
-Kills the `*docker:*' / `*k8s:*' / `*eltainer:*' buffers (their
-kill-hooks already cancel buffer-local timers and close streams),
-stops the global Docker /events stream, and sweeps for any
-remaining eltainer-owned timer.
+(defun eltainer--quiet-buffer (buf)
+  "Run BUF's `kill-buffer-hook' functions without killing BUF.
+Cancels buffer-local timers and closes streams (everything the
+hooks were registered for) while leaving the buffer alive.  Used
+by reload to clear old-code timers before redefining them, so the
+user keeps their view buffers across an `eltainer-reload'."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (run-hooks 'kill-buffer-hook))))
 
-By default leaves `*docker:exec:*' / `*k8s:exec:*' TTY buffers
-alone — killing them drops a live shell.  With a prefix arg
-INCLUDE-EXEC, kill those too."
+;;;###autoload
+(defun eltainer-stop-all (&optional include-exec keep-buffers no-confirm)
+  "Shut down every eltainer watcher.
+By default, kills the `*docker:*' / `*k8s:*' / `*eltainer:*'
+buffers — their kill-hooks already cancel buffer-local timers and
+close streams — then stops the global Docker /events stream and
+sweeps for any remaining eltainer-owned timer.
+
+INCLUDE-EXEC (the interactive prefix arg) opts the
+`*docker:exec:*' / `*k8s:exec:*' TTY buffers in too; by default
+they are spared, since killing them drops a live shell.
+
+KEEP-BUFFERS (non-interactive) runs each buffer's kill-hooks
+*without* killing the buffer.  Use this when you want to quiet
+the activity but preserve the view content — `eltainer-reload'
+does this so a reload doesn't take the user's open views down
+with it.
+
+NO-CONFIRM skips the y-or-n prompt; safe for programmatic
+callers."
   (interactive "P")
   (let* ((bufs (eltainer-stop--buffers include-exec))
          (events-live (and (fboundp 'docker-events--running-p)
-                           (docker-events--running-p))))
+                           (docker-events--running-p)))
+         (verb (if keep-buffers "Quiet" "Stop"))
+         (verb-past (if keep-buffers "quieted" "stopped")))
     (cond
      ((not (or bufs events-live))
-      (message "eltainer: nothing to stop"))
-     ((not (yes-or-no-p
-            (format "Stop all eltainer activity (%d buffer%s%s)? "
-                    (length bufs)
-                    (if (= 1 (length bufs)) "" "s")
-                    (if events-live ", + Docker /events stream" ""))))
-      (message "eltainer: stop cancelled"))
+      (message "eltainer: nothing to %s"
+               (if keep-buffers "quiet" "stop")))
+     ((not (or no-confirm
+               (yes-or-no-p
+                (format "%s all eltainer activity (%d buffer%s%s)? "
+                        verb
+                        (length bufs)
+                        (if (= 1 (length bufs)) "" "s")
+                        (if events-live ", + Docker /events stream" "")))))
+      (message "eltainer: %s cancelled"
+               (if keep-buffers "quiet" "stop")))
      (t
-      (dolist (b bufs) (ignore-errors (kill-buffer b)))
+      (dolist (b bufs)
+        (if keep-buffers
+            (eltainer--quiet-buffer b)
+          (ignore-errors (kill-buffer b))))
       (when (fboundp 'docker-events-stop)
         (docker-events-stop))
       (let ((swept (eltainer-stop--sweep-timers)))
-        (message "eltainer: stopped %d buffer%s%s%s"
+        (message "eltainer: %s %d buffer%s%s%s"
+                 verb-past
                  (length bufs)
                  (if (= 1 (length bufs)) "" "s")
                  (if events-live ", killed /events stream" "")

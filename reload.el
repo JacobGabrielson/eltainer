@@ -45,9 +45,18 @@
 
 (defun eltainer-reload ()
   "Byte-compile and reload every eltainer module.
-Refreshes both `docker/' and `k8s/' subtrees, then re-enters the
-major mode in any live `docker-*-mode' / `k8s-*-mode' buffer."
+Quiets running activity from the *old* code first (so timers and
+streams from the previous definitions don't keep firing after the
+new code redefines them), then byte-compiles and re-loads both
+the `docker/' and `k8s/' subtrees, then re-enters the major mode
+in any live `docker-*-mode' / `k8s-*-mode' buffer.  View buffers
+themselves are preserved — only their timers/streams die."
   (interactive)
+  ;; Quiet old-code activity before redefinition.  `eltainer-stop-all'
+  ;; lives in eltainer.el; tolerate it not being loaded yet so the
+  ;; very first `eltainer-reload' (cold start) still works.
+  (when (fboundp 'eltainer-stop-all)
+    (eltainer-stop-all nil 'keep-buffers 'no-confirm))
   (let* ((docker-dir (expand-file-name "docker" eltainer--source-dir))
          (k8s-dir (expand-file-name "k8s" eltainer--source-dir))
          (load-path (append (list docker-dir k8s-dir
