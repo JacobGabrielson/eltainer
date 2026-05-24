@@ -131,40 +131,79 @@ on the same row instead of jumping to the top."
    ((stringp value) (concat "ns:" value))    ; namespace group header
    ((listp value)   (k8s--resource-uid value))))
 
-(defun k8s--collect-expanded-section-ids ()
-  "Return stable IDs of every currently-visible (expanded) section.
-A refresh re-inserts sections in their HIDE-arg state, so `magit'
-re-collapses anything the user had `TAB'-expanded.  This snapshot
-lets the restore re-expand them."
-  (let (out seen)
-    (save-excursion
-      (goto-char (point-min))
-      (while (not (eobp))
-        (let ((sec (get-text-property (point) 'magit-section)))
-          (when (and sec (not (memq sec seen))
-                     (not (eq (ignore-errors (oref sec hidden)) t)))
-            (push sec seen)
-            (when-let ((id (k8s--section-stable-id
-                            (ignore-errors (oref sec value)))))
-              (push id out))))
-        (forward-line 1)))
-    (nreverse out)))
+(defvar-local k8s--expanded-sections nil
+  "Buffer-local hash of stable section IDs currently expanded.
+Maintained incrementally by advice on `magit-section-show' /
+`magit-section-hide' (`k8s--track-section-{shown,hidden}'), so
+the per-refresh `k8s--save-point-context' doesn't have to walk
+the whole buffer.  Lazily initialized via
+`k8s--ensure-expanded-set' — the first call seeds it by walking
+the buffer once.")
 
-(defun k8s--show-sections-by-ids (ids)
-  "Re-expand any section whose stable ID is in IDS."
-  (when ids
+(defun k8s--ensure-expanded-set ()
+  "Return the buffer-local expanded-sections hash; create + seed if needed.
+First call walks the buffer once; subsequent calls are O(1)."
+  (unless (hash-table-p k8s--expanded-sections)
+    (setq k8s--expanded-sections (make-hash-table :test 'equal))
     (save-excursion
       (goto-char (point-min))
       (let (seen)
         (while (not (eobp))
           (let ((sec (get-text-property (point) 'magit-section)))
-            (when (and sec (not (memq sec seen)))
+            (when (and sec (not (memq sec seen))
+                       (not (eq (ignore-errors (oref sec hidden)) t)))
               (push sec seen)
               (when-let ((id (k8s--section-stable-id
                               (ignore-errors (oref sec value)))))
-                (when (member id ids)
-                  (ignore-errors (magit-section-show sec))))))
-          (forward-line 1))))))
+                (puthash id t k8s--expanded-sections))))
+          (forward-line 1)))))
+  k8s--expanded-sections)
+
+(defun k8s--track-section-shown (section &rest _)
+  "Advice: record that SECTION is now expanded in the current buffer.
+No-op outside eltainer buffers (the hash is buffer-local + nil by
+default; checking `hash-table-p' filters them out)."
+  (when (and (boundp 'k8s--expanded-sections)
+             (hash-table-p k8s--expanded-sections))
+    (when-let ((id (k8s--section-stable-id
+                    (ignore-errors (oref section value)))))
+      (puthash id t k8s--expanded-sections))))
+
+(defun k8s--track-section-hidden (section &rest _)
+  "Advice: record that SECTION is now collapsed in the current buffer."
+  (when (and (boundp 'k8s--expanded-sections)
+             (hash-table-p k8s--expanded-sections))
+    (when-let ((id (k8s--section-stable-id
+                    (ignore-errors (oref section value)))))
+      (remhash id k8s--expanded-sections))))
+
+;; Global advice — fires for every magit-section toggle anywhere, but the
+;; buffer-local hash-table-p gate makes it a no-op outside eltainer.
+(advice-add 'magit-section-show :after #'k8s--track-section-shown)
+(advice-add 'magit-section-hide :after #'k8s--track-section-hidden)
+
+(defun k8s--show-sections-by-ids (ids)
+  "Re-expand any section whose stable ID is in IDS.
+IDS may be a list of strings or a hash table mapping IDs -> non-nil."
+  (when ids
+    (let ((set (cond
+                ((hash-table-p ids) ids)
+                (t (let ((h (make-hash-table :test 'equal)))
+                     (dolist (id ids) (puthash id t h))
+                     h)))))
+      (when (> (hash-table-count set) 0)
+        (save-excursion
+          (goto-char (point-min))
+          (let (seen)
+            (while (not (eobp))
+              (let ((sec (get-text-property (point) 'magit-section)))
+                (when (and sec (not (memq sec seen)))
+                  (push sec seen)
+                  (when-let ((id (k8s--section-stable-id
+                                  (ignore-errors (oref sec value)))))
+                    (when (gethash id set)
+                      (ignore-errors (magit-section-show sec))))))
+              (forward-line 1))))))))
 
 (defun k8s--save-point-context ()
   "Capture point + scroll + section state across a refresh.
@@ -186,7 +225,10 @@ when the user was inside an expanded body."
           :offset    (max 0 (or offset 0))
           :line      (line-number-at-pos pos)
           :win-start (and win (window-start win))
-          :expanded  (k8s--collect-expanded-section-ids))))
+          ;; Live hash, not a snapshot — save/render/restore is
+          ;; synchronous so the hash can't move under us, and a
+          ;; hash is what `k8s--show-sections-by-ids' wants anyway.
+          :expanded  (k8s--ensure-expanded-set))))
 
 (defun k8s--restore-point-context (ctx)
   "Re-seek to the section matching CTX (from `k8s--save-point-context').
