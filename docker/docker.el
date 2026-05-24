@@ -204,7 +204,7 @@ section."
       (docker--insert-header view-name)
       (when column-header
         (insert (propertize column-header 'font-lock-face 'docker-section-heading)))
-      (dolist (item (append items nil))
+      (seq-doseq (item items)
         (funcall line-fn item))
       (insert "\n"))
     (let ((magit-section-cache-visibility nil))

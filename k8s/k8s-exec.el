@@ -368,11 +368,13 @@ Signals an error if the connection or WebSocket handshake fails."
            (exit-code
             (when err-json
               (let* ((details (cdr (assq 'details err-json)))
-                     (causes (cdr (assq 'causes details))))
-                (cl-loop for c across (or causes [])
-                         thereis (and (equal (cdr (assq 'reason c)) "ExitCode")
-                                      (string-to-number
-                                       (or (cdr (assq 'message c)) ""))))))))
+                     (causes (cdr (assq 'causes details)))
+                     (c (seq-find (lambda (cause)
+                                    (equal (cdr (assq 'reason cause))
+                                           "ExitCode"))
+                                  (or causes []))))
+                (and c (string-to-number
+                        (or (cdr (assq 'message c)) "")))))))
       (unless (k8s-exec--session-headers-done sess)
         (error "k8s-exec: connection closed before handshake completed"))
       (when (and status-code (/= status-code 101))

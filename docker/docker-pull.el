@@ -51,13 +51,24 @@
                               'font-lock-face 'error)))
          (id
           ;; Per-layer line: replace any existing one for this id (the
-          ;; whole physical line, newline included).
-          (goto-char (point-min))
-          (if (re-search-forward (format "^%s: " (regexp-quote id)) nil t)
-              (progn (beginning-of-line)
-                     (delete-region (point)
-                                    (min (point-max) (1+ (line-end-position)))))
-            (goto-char (point-max)))
+          ;; whole physical line, newline included).  Layer IDs are
+          ;; hex hashes — no regex metachars — so a literal
+          ;; `search-forward' avoids the regex compilation that
+          ;; `re-search-forward (format "^%s: " (regexp-quote id))'
+          ;; would do once per event.
+          (let* ((target (concat id ": "))
+                 (tlen (length target))
+                 found)
+            (goto-char (point-min))
+            (while (and (not found) (search-forward target nil t))
+              (when (= (- (point) tlen) (line-beginning-position))
+                (setq found t)))
+            (if found
+                (progn (beginning-of-line)
+                       (delete-region
+                        (point)
+                        (min (point-max) (1+ (line-end-position)))))
+              (goto-char (point-max))))
           (insert (format "%s: %-30s %s\n"
                           id (or status "")
                           (or progress ""))))

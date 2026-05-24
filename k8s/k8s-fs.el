@@ -161,10 +161,21 @@ order; the UI layer should sort if it cares)."
   (let* ((r (k8s-exec conn ns pod container
                       (list "sh" "-c" k8s-fs--list-script "_" path))))
     (k8s-fs--require-success r (format "list %s" path))
-    (let ((lines (split-string
-                  (decode-coding-string (k8s-exec-result-stdout r) 'utf-8)
-                  "\n" t)))
-      (mapcar (lambda (l) (k8s-fs--parse-line l nil)) lines))))
+    ;; Walk the decoded payload directly instead of materializing the
+    ;; intermediate `split-string' list — saves N temp strings on big
+    ;; directories.
+    (let* ((decoded (decode-coding-string (k8s-exec-result-stdout r)
+                                          'utf-8))
+           (len (length decoded))
+           (start 0)
+           out)
+      (while (< start len)
+        (let ((nl (or (string-search "\n" decoded start) len)))
+          (when (> nl start)
+            (push (k8s-fs--parse-line (substring decoded start nl) nil)
+                  out))
+          (setq start (1+ nl))))
+      (nreverse out))))
 
 (defun k8s-fs-stat (conn ns pod container path)
   "Return a `k8s-fs-entry' describing PATH inside POD/CONTAINER."

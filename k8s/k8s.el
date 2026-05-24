@@ -395,7 +395,7 @@ k8s-themed heading face."
                (format "  %-8s %-8s %-25s %-10s %s\n"
                        "LAST" "COUNT" "SOURCE" "TYPE" "MESSAGE")
                'font-lock-face 'k8s-dim))
-      (seq-doseq (ev (append events nil))
+      (seq-doseq (ev events)
         (let* ((last-time (or (cdr (assq 'lastTimestamp ev)) ""))
                (count (or (cdr (assq 'count ev)) 1))
                (source (cdr (assq 'source ev)))
@@ -1277,11 +1277,11 @@ the Pod is garbage-collected."
                 (propertize age 'font-lock-face 'k8s-dim)))
       ;; Detail: rules
       (when rules
-        (seq-doseq (rule (append rules nil))
+        (seq-doseq (rule rules)
           (let ((host (or (cdr (assq 'host rule)) "*"))
                 (paths (cdr (assq 'paths (cdr (assq 'http rule))))))
             (when paths
-              (seq-doseq (path (append paths nil))
+              (seq-doseq (path paths)
                 (let* ((p (or (cdr (assq 'path path)) "/"))
                        (backend (cdr (assq 'backend path)))
                        (svc (cdr (assq 'service backend)))
@@ -1415,7 +1415,7 @@ agent-sandbox controller isn't running)."
           (insert (propertize (format "    Pod IPs:   %s\n"
                                       (mapconcat #'identity ips ", "))
                               'font-lock-face 'k8s-dim)))
-        (dolist (c (append (cdr (assq 'conditions status)) nil))
+        (seq-doseq (c (or (cdr (assq 'conditions status)) []))
           (insert (propertize
                    (format "    %-13s %s%s\n"
                            (concat (cdr (assq 'type c)) ":")

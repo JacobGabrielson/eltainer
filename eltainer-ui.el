@@ -96,7 +96,7 @@ HEADING-FACE is applied to alist keys (default `eltainer-section-heading')."
      ((eq value t)    (insert "true\n"))
      ((vectorp value)
       (insert "\n")
-      (seq-doseq (item (append value nil))
+      (seq-doseq (item value)
         (insert (make-string indent ?\s) "- ")
         (eltainer-ui-describe-value item (+ indent 2) face)))
      ((and (listp value) (consp (car value)))
