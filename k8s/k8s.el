@@ -607,11 +607,19 @@ k8s-themed heading face."
   "g" #'revert-buffer
   "q" #'quit-window
   ;; dired-style marks (see k8s-marks.el)
-  "m"   #'k8s-mark
-  "u"   #'k8s-unmark
-  "U"   #'k8s-unmark-all
-  "t"   #'k8s-toggle-marks
-  "DEL" #'k8s-unmark-backward)
+  "m"     #'k8s-mark
+  "u"     #'k8s-unmark
+  "U"     #'k8s-unmark-all
+  "t"     #'k8s-toggle-marks
+  "DEL"   #'k8s-unmark-backward
+  ;; Dired also accepts these for "unmark all".  In dired the
+  ;; distinction is between "remove every mark" (`U' / `* !') and
+  ;; "remove all marks of a specific character" (`M-DEL' / `* ?',
+  ;; which prompts).  eltainer only has one mark character, so all
+  ;; four collapse to the same action.
+  "M-DEL" #'k8s-unmark-all
+  "* !"   #'k8s-unmark-all
+  "* ?"   #'k8s-unmark-all)
 
 ;; `eltainer-switch-kubeconfig' lives in the top-level eltainer.el so
 ;; both the dashboard and the k8s views can call it.  Autoload so we
