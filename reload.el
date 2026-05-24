@@ -52,11 +52,17 @@ the `docker/' and `k8s/' subtrees, then re-enters the major mode
 in any live `docker-*-mode' / `k8s-*-mode' buffer.  View buffers
 themselves are preserved — only their timers/streams die."
   (interactive)
-  ;; Quiet old-code activity before redefinition.  `eltainer-stop-all'
-  ;; lives in eltainer.el; tolerate it not being loaded yet so the
-  ;; very first `eltainer-reload' (cold start) still works.
+  ;; Quiet old-code activity before redefinition.  Tolerate
+  ;; `eltainer-stop-all' not being loaded yet (cold start) and don't
+  ;; let an error in any kill-hook (e.g. an exec-plugin failure when
+  ;; a buffer's connection auth expired) abort the reload — just warn
+  ;; and continue.  Worst case: a couple of old-code timers stay
+  ;; armed; the user can run `eltainer-stop-all' explicitly.
   (when (fboundp 'eltainer-stop-all)
-    (eltainer-stop-all nil 'keep-buffers 'no-confirm))
+    (condition-case err
+        (eltainer-stop-all nil 'keep-buffers 'no-confirm)
+      (error (message "eltainer-reload: stop-all failed (%s); continuing"
+                      (error-message-string err)))))
   (let* ((docker-dir (expand-file-name "docker" eltainer--source-dir))
          (k8s-dir (expand-file-name "k8s" eltainer--source-dir))
          (load-path (append (list docker-dir k8s-dir
