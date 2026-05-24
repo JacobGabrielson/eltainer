@@ -28,7 +28,11 @@
 When nil (the default) eltainer auto-discovers a Prometheus
 Service by scanning the cluster's Services.  Set it to the symbol
 `disabled' to switch the Prometheus integration off entirely and
-skip discovery."
+skip discovery.
+
+Discovery results — including \"found nothing\" — are memoized per
+cluster.  Run `M-x k8s-prom-reset' after installing or moving
+Prometheus mid-session so the next query re-discovers it."
   :type '(choice (const :tag "Auto-discover" nil)
                  (const :tag "Disabled" disabled)
                  (string :tag "namespace/name:port"))
