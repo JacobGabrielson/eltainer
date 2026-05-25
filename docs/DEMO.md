@@ -1,11 +1,12 @@
 # Demo storyboard
 
-There are two recorded demos:
+There are three recorded demos:
 
 | Demo | GIF | Init file | Record with |
 |------|-----|-----------|-------------|
 | exec | `docs/exec-demo.gif` | `docs/demo-init.el` | `record-demo.sh` *(or `… exec`)* |
 | metrics | `docs/metrics-demo.gif` | `docs/metrics-demo-init.el` | `record-demo.sh metrics` |
+| marks | `docs/marks-demo.gif` | `docs/marks-demo-init.el` | `record-demo.sh marks` |
 
 This file is the **plain-English script** for `docs/exec-demo.gif`.
 The implementation lives in `docs/demo-init.el` and is re-recorded by
@@ -86,3 +87,22 @@ limit 256 MiB) and the k8s pod `flux-box` (burst/idle cpu+mem+net).
 | 5 | Pod gauges | ~10 s | `TAB' on `flux-box'; CPU / memory / disk gauges with trend sparklines, plus the pod network rx/tx sparkline. |
 | 6 | Nodes view | ~5 s | `k8s-nodes' opens the cluster Nodes view — per-node roles / status / version with live CPU / memory / filesystem gauges. |
 | 7 | Quit | <1 s | `kill-emacs 0'. |
+
+## Marks + multilog demo
+
+`docs/marks-demo.gif` — driven by `docs/marks-demo-init.el`, recorded
+with `record-demo.sh marks`.  It tours the dired-style marking +
+stern-style multipod log tail.
+
+Off-camera, `record-demo.sh marks` creates a `chatty` Deployment with
+3 replicas in the kind cluster.  Each pod prints `[$(hostname)] tick
+N HH:MM:SS` once a second, so the per-pod prefixes are visually
+distinct in the recording.
+
+| # | Beat | Linger | What the viewer sees |
+|---|------|--------|----------------------|
+| 1 | Dashboard → pods | ~2 s | `M-x eltainer', then `k'. |
+| 2 | Mark first chatty | ~1 s | Point lands on the first `chatty-*' pod row; `m' lights up the leading indent with `* ' (gold) and advances. |
+| 3 | Mark second chatty | ~1 s | `m' again — second pod gets a `* ' prefix. |
+| 4 | Multipod tail | ~10 s | `L' opens `*k8s:multilog:marked/default/2-pods*'.  Both pods stream tick lines interleaved by arrival, each prefixed `[default/chatty-…]' in a distinct colour (slot 1 red, slot 2 green from the Sasha Trubetskoy palette).  Auto-scroll keeps the buffer pinned to the tail. |
+| 5 | Quit | <1 s | `kill-emacs 0'. |

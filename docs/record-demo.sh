@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Record an eltainer demo into docs/<name>-demo.gif.
 #
-#   record-demo.sh [exec|metrics]      (default: exec)
+#   record-demo.sh [exec|metrics|marks]  (default: exec)
 #
 #   exec     — dashboard, docker exec, context switch, pod logs,
 #              multi-container picker         -> docs/exec-demo.gif
 #   metrics  — docker + k8s resource gauges   -> docs/metrics-demo.gif
+#   marks    — dired-style marks + stern-style multipod log tail
+#                                             -> docs/marks-demo.gif
 #
 # Pipeline:
 #   1. asciinema rec --command "emacs -nw -Q -l <name>-demo-init.el" -> .cast
@@ -20,7 +22,8 @@ demo="${1:-exec}"
 case "$demo" in
   exec)    init="$here/demo-init.el" ;;
   metrics) init="$here/metrics-demo-init.el" ;;
-  *) echo "record-demo.sh: unknown demo '$demo' (exec|metrics)" >&2; exit 1 ;;
+  marks)   init="$here/marks-demo-init.el" ;;
+  *) echo "record-demo.sh: unknown demo '$demo' (exec|metrics|marks)" >&2; exit 1 ;;
 esac
 cast="$here/${demo}-demo.cast"
 gif="$here/${demo}-demo.gif"
@@ -72,6 +75,40 @@ spec:
     command: ["/bin/sh","-c","echo sidecar-container; sleep infinity"]
     resources: {requests: {cpu: 25m, memory: 16Mi}, limits: {cpu: 50m, memory: 32Mi}}
 YAML
+fi
+
+if [ "$demo" = marks ]; then
+  # 3-replica deployment of chatty pods so there's something live for
+  # the multipod tail to render in colour.  Each pod prints its own
+  # name in every line so the per-pod prefixes are obviously distinct
+  # in the recording.
+  if ! kubectl get deploy chatty >/dev/null 2>&1; then
+    kubectl apply -f - <<'YAML' >/dev/null
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: chatty}
+spec:
+  replicas: 3
+  selector: {matchLabels: {app: chatty}}
+  template:
+    metadata: {labels: {app: chatty}}
+    spec:
+      containers:
+      - name: ticker
+        image: busybox:1.37
+        command:
+        - /bin/sh
+        - -c
+        - |
+          i=0
+          while true; do
+            echo "[$(hostname)] tick $i $(date +%H:%M:%S)"
+            i=$((i+1))
+            sleep 1
+          done
+YAML
+    kubectl rollout status deploy/chatty --timeout=90s >/dev/null
+  fi
 fi
 
 if [ "$demo" = metrics ]; then
