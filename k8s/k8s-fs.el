@@ -134,21 +134,46 @@ Propagates stat failure (e.g. file not found) via `|| exit'.")
 ;;; ---------------------------------------------------------------------------
 ;;; Exec wrapper
 
+(defconst k8s-fs--no-shell-rx
+  (rx (or "exec: \"sh\""
+          "executable file not found"
+          "no such file or directory"
+          "starting container process caused"))
+  "Pattern in an exec failure that means `sh' (or its peers) isn't there.
+Distroless and scratch images ship without `/bin/sh', `find', `stat'
+etc., so eltainer's filesystem-browse script can't run at all in
+them — the underlying error message is several lines of OCI runtime
+noise; this regex catches the diagnostic substrings.")
+
 (defun k8s-fs--require-success (r context)
-  "Signal an error if exec result R isn't success.  CONTEXT prefixes the message."
-  (let ((exit (k8s-exec-result-exit-code r))
-        (status (k8s-exec-result-status r))
-        (stderr (k8s-exec-result-stderr r))
-        (msg (k8s-exec-result-message r)))
+  "Signal an error if exec result R isn't success.  CONTEXT prefixes the message.
+Detects the \"container has no shell\" case (distroless / scratch
+images) and replaces the OCI-runtime wall of text with a one-line
+diagnostic the user can act on."
+  (let* ((exit (k8s-exec-result-exit-code r))
+         (status (k8s-exec-result-status r))
+         (stderr (k8s-exec-result-stderr r))
+         (msg (k8s-exec-result-message r))
+         (combined (mapconcat #'identity
+                              (delq nil (list stderr msg status))
+                              " ")))
     (unless (or (eq exit 0)
                 (and (null exit) (equal status "Success")))
-      (error "k8s-fs: %s failed (exit=%S): %s"
-             context exit
-             (or (and stderr (> (length stderr) 0)
-                      (string-trim stderr))
-                 msg
-                 status
-                 "unknown error")))))
+      (cond
+       ((and (null exit)
+             (stringp combined)
+             (string-match-p k8s-fs--no-shell-rx combined))
+        (error "k8s-fs: container has no `sh' / `find' / `stat' \
+\(distroless or scratch image) — filesystem browse needs a POSIX \
+shell + GNU/BusyBox coreutils inside the container"))
+       (t
+        (error "k8s-fs: %s failed (exit=%S): %s"
+               context exit
+               (or (and stderr (> (length stderr) 0)
+                        (string-trim stderr))
+                   msg
+                   status
+                   "unknown error")))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Public API
