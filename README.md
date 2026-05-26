@@ -254,6 +254,11 @@ k8s/
   dep.
 - A running Docker daemon and / or a kubeconfig.
 
+## What's new
+
+See [`NEWS.md`](NEWS.md) for a reverse-chronological log of
+user-visible changes (new keys, new views, UX shifts).
+
 ## Quick start
 
 ```elisp

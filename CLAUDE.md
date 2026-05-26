@@ -177,6 +177,35 @@ After any change that touches the user-visible surface, update
 Pure-internal changes (perf fix, refactor with no API change) don't
 need a README update.
 
+## NEWS.md hygiene
+
+`NEWS.md` is a reverse-chronological, user-facing log — Emacs-style.
+The first section is always `## Unreleased`; new entries get
+**prepended** *inside* that section as `### Short feature name`
+followed by a short user-perspective description (a few sentences,
+optionally a table of new keys).
+
+When a feature ships that's visible to the end user — a new key, a
+new view, a new behaviour, a UX change they'd notice — add an
+entry to `NEWS.md` in the same commit.  The trigger is the same
+list as README hygiene above (key-binding tables, dependencies,
+arch list, demo references).
+
+Do *not* add an entry for:
+- Pure-internal refactors that don't change behaviour.
+- Performance fixes that aren't visibly faster.
+- Plan-doc edits, README rewording, bug fixes that restore
+  documented behaviour.
+- Test-only changes.
+
+Write from the user's point of view (*"`F` now narrows by label"*),
+not the implementation's (*"added eltainer-filter.el"*).  Commit
+messages are where the how lives; `NEWS.md` is the what.
+
+When tagging a release: rename the `## Unreleased` heading to
+`## <version> — <date>` and prepend a fresh empty `## Unreleased`
+above it.
+
 ## Testing
 
 Tests live under `test/` and use ERT.  The harness replays HTTP
