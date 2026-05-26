@@ -37,15 +37,16 @@ Each new arm is ~5 lines plus the property at the render site.
 
 ---
 
-## Filter / narrow views by label  *(status: proposal — see [docs/label-filter-plan.md](label-filter-plan.md))*
+## Filter / narrow views by label  *(status: shipped — see [docs/label-filter-plan.md](label-filter-plan.md))*
 
-User wants a magit-style way to narrow a view to resources matching
-a label selector.  Open questions: keystroke (`/` is the ibuffer
-convention but conflicts with isearch in some setups; `f` is taken
-by filesystem-browse; `L` is a possibility), composition with
-existing namespace filter, server-side vs client-side filtering.
+`F` is the filter prefix in every k8s view and the docker
+containers view.  `F l` / `F n` set the label selector / name
+regex; `F c` clears; `F F` echoes the current state.  Labels go
+server-side (`?labelSelector=` on k8s, `?filters=` JSON on docker —
+docker is equality-only); name-regex is client-side.
 
-See the linked plan for the design.
+Mode-line shows `[label:KEY=VAL name:REGEX]` in the warning face
+when a filter is active.
 
 ---
 

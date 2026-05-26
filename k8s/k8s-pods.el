@@ -167,14 +167,33 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
 ;;; Buffer refresh
 
 (defun k8s--pods-refresh ()
-  "Refresh the pods buffer content."
+  "Refresh the pods buffer content.
+Honours the buffer-local `eltainer-filter--state' — labels go to
+the API server via `k8s--api-path-fn'; name-regex is applied here
+after fetch."
   (let* ((inhibit-read-only t)
          (ctx (k8s--save-point-context))
          (conn (k8s--ensure-connection))
-         (pods (if (and k8s--resource-table
-                        (> (hash-table-count k8s--resource-table) 0))
-                   (vconcat (hash-table-values k8s--resource-table))
-                 (k8s-list-pods conn k8s--namespace)))
+         (filter eltainer-filter--state)
+         (pods (cond
+                ((and k8s--resource-table
+                      (> (hash-table-count k8s--resource-table) 0))
+                 (vconcat (hash-table-values k8s--resource-table)))
+                (k8s--api-path-fn
+                 (cdr (assq 'items (k8s-get
+                                    conn (funcall k8s--api-path-fn
+                                                  k8s--namespace)))))
+                (t
+                 (k8s-list-pods conn k8s--namespace))))
+         (pods (if (and filter
+                        (let ((nr (eltainer-filter-name-regex filter)))
+                          (and nr (not (string-empty-p nr)))))
+                   (seq-filter
+                    (lambda (p)
+                      (eltainer-filter-match-name-p
+                       filter (k8s--resource-name p)))
+                    pods)
+                 pods))
          (grouped (k8s--group-by-namespace pods)))
     (erase-buffer)
     (setq header-line-format nil)
@@ -685,7 +704,8 @@ Prompts for HOST; pre-fills with the last lookup from this session."
         (list "%e" 'mode-line-front-space 'mode-line-mule-info
               'mode-line-modified 'mode-line-remote " "
               'mode-line-buffer-identification "  "
-              '(:eval (k8s--watch-mode-line)) "  "
+              '(:eval (k8s--watch-mode-line))
+              '(:eval (k8s--filter-mode-line)) "  "
               'mode-line-position 'mode-line-modes
               'mode-line-end-spaces))
   (add-hook 'kill-buffer-hook #'k8s--watch-stop-for-buffer nil t))
@@ -702,7 +722,12 @@ Prompts for HOST; pre-fills with the last lookup from this session."
       (k8s-pods-mode)
       (k8s--ensure-connection)
       (setq k8s--api-path-fn
-            (lambda (ns) (k8s--list-path 'pods ns)))
+            (lambda (ns)
+              (k8s--list-path
+               'pods ns
+               (and (bound-and-true-p eltainer-filter--state)
+                    (eltainer-filter-label-selector
+                     eltainer-filter--state)))))
       (k8s--pods-refresh)
       (k8s--metrics-start))
     (pop-to-buffer buf)))

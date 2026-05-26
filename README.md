@@ -69,6 +69,7 @@ dashboard if that's what you want.
 | `i` | Inspect resource at point |
 | `d` | Delete / disconnect (context-aware) |
 | `a` | Toggle running-only vs. all (containers view) |
+| `F` | Narrow by label selector (`F l`) / name regex (`F n`); engine `?filters=` for labels (equality only — `!=` / `!key` are unsupported on docker) |
 | `s` `S` `r` `K` | Start / Stop / Restart / Kill container |
 | `l` | Tail logs (streaming, stdout / stderr demuxed) |
 | `e` | Exec a shell inside the container (TTY) |
@@ -101,6 +102,7 @@ metrics buffer for the container.
 | `?` | Context-aware dispatch — actions for the resource under point, plus `v` for the view switcher |
 | `g` | Refresh |
 | `N` | Switch namespace |
+| `F` | Narrow this view (`F l` label selector, `F n` name regex, `F c` clear) — labels go server-side via `?labelSelector=`; name-regex is client-side |
 | `w` | Toggle live watch (auto-update via the K8s watch API) |
 | `b` | Switch kubeconfig context (same picker as from the dashboard) |
 | `i` | Describe resource |
@@ -186,6 +188,7 @@ eltainer-gauge.el        Shared text gauges + sparklines for the metrics views
 eltainer-fs.el           Shared FS-listing scripts + entry struct + parser
 eltainer-dired.el        Shared dired-mode parent for the FS browser
 eltainer-net.el          Shared DNS-lookup chain (getent / nslookup / fallback)
+eltainer-filter.el       View-narrowing layer (label selector + name regex)
 eltainer-terminal.el     eat-backed terminal host for interactive exec
 eltainer-shell-helper.el Invoke external helpers (cred / exec plugins)
 reload.el                Dev helper: byte-compile + reload both halves

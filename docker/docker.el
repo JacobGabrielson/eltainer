@@ -11,6 +11,7 @@
 (require 'magit-section)
 (require 'transient)
 (require 'eltainer-ui)
+(require 'eltainer-filter)
 (require 'docker-config)
 (require 'docker-api)
 (require 'docker-ps)
@@ -112,6 +113,7 @@ Set this to a `docker-config' struct to bypass environment detection."
   "d" #'docker-delete-at-point
   "i" #'docker-inspect-at-point
   "l" #'docker-logs-at-point
+  "F" #'eltainer-filter-dispatch
   "?" #'docker-dispatch
   "RET" #'docker-dwim-ret)
 
@@ -266,10 +268,29 @@ Filled by the stats poll timer; read while rendering container detail.")
 
 (defun docker--containers-refresh ()
   "Refresh the containers buffer using the buffer-local `--show-all' flag.
+Honours the buffer-local `eltainer-filter--state': label-selector
+goes server-side via the engine's `?filters=' query (equality only —
+see `docker-list-containers--label-filter-json'); name-regex is
+applied client-side.
 Side-effect: refreshes `docker--live-container-ids' so the metrics
 tick can reap entries for containers no longer on the daemon."
   (let* ((cfg (docker--ensure-config))
-         (items (docker-list-containers cfg :all docker-containers--show-all))
+         (filter (and (bound-and-true-p eltainer-filter--state)
+                      eltainer-filter--state))
+         (label-sel (and filter (eltainer-filter-label-selector filter)))
+         (items (docker-list-containers cfg
+                                        :all docker-containers--show-all
+                                        :label-selector label-sel))
+         (items (if (and filter
+                         (let ((nr (eltainer-filter-name-regex filter)))
+                           (and nr (not (string-empty-p nr)))))
+                    (vconcat
+                     (seq-filter
+                      (lambda (c)
+                        (eltainer-filter-match-name-p
+                         filter (docker-container-name c)))
+                      items))
+                  items))
          (hdr (format "  %-30s %-10s %-10s %-12s %-6s\n"
                       "NAME" "STATE" "IMAGE" "PORTS" "AGE"))
          (label (if docker-containers--show-all

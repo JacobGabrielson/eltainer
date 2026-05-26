@@ -250,12 +250,21 @@ two forms in sync without a per-render `assq')."
       (puthash (car entry) (cdr entry) lh))
     (setq k8s--list-api-paths-hash lh)))
 
-(defun k8s--list-path (type &optional namespace)
-  "Return the API list path for resource TYPE, optionally in NAMESPACE."
-  (let ((entry (gethash type k8s--list-api-paths-hash)))
-    (if namespace
-        (format (cadr entry) namespace)
-      (car entry))))
+(defun k8s--list-path (type &optional namespace label-selector)
+  "Return the API list path for resource TYPE.
+With NAMESPACE, build the namespaced path; otherwise the
+cluster-wide variant.  With LABEL-SELECTOR (a non-empty string in
+the K8s `labelSelector' mini-language: `a=b,c!=d,key,!key'),
+append it as a `?labelSelector=' query so the API server narrows
+the response."
+  (let* ((entry (gethash type k8s--list-api-paths-hash))
+         (base (if namespace
+                   (format (cadr entry) namespace)
+                 (car entry))))
+    (if (and label-selector (not (string-empty-p label-selector)))
+        (format "%s?labelSelector=%s"
+                base (url-hexify-string label-selector))
+      base)))
 
 (defvar k8s--resource-api-paths
   '((pod         . "/api/v1/namespaces/%s/pods/%s")

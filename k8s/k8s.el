@@ -12,6 +12,7 @@
 (require 'transient)
 (require 'eltainer-ui)
 (require 'eltainer-gauge)
+(require 'eltainer-filter)
 (require 'k8s-config)
 (require 'k8s-api)
 (require 'k8s-watch)
@@ -750,22 +751,65 @@ buffer to the top on every watch event."
     (propertize " [W!]" 'face 'warning))
    (t "")))
 
+(defun k8s--filter-mode-line ()
+  "Return mode-line string summarising the active filter, or `\"\"'."
+  (if (or (null eltainer-filter--state)
+          (eltainer-filter-empty-p eltainer-filter--state))
+      ""
+    (propertize (format " [%s]"
+                        (eltainer-filter-format eltainer-filter--state))
+                'face 'warning)))
+
+(defun k8s--on-filter-change ()
+  "`eltainer-filter-change-hook' handler for k8s views.
+Stops the watch (it was opened with the previous filter's
+labelSelector and won't reflect the new one), drops the
+resource-table cache so the next refresh hits the API fresh, and
+lets the generic refresh path re-render."
+  (when (derived-mode-p 'magit-section-mode)
+    (when (and k8s--watch (k8s-watch-active-p k8s--watch))
+      (k8s--watch-stop-for-buffer))
+    (setq k8s--resource-table nil)))
+
+(add-hook 'eltainer-filter-change-hook #'k8s--on-filter-change)
+
 ;;; ---------------------------------------------------------------------------
 ;;; Generic refresh engine
 
 (defun k8s--generic-refresh (resource-type api-fn column-header line-fn)
   "Refresh buffer showing RESOURCE-TYPE.
 API-FN fetches items, COLUMN-HEADER is the column titles string,
-LINE-FN inserts one item as a section."
+LINE-FN inserts one item as a section.
+
+When an `eltainer-filter' is active for this buffer:
+  - the label-selector half is applied SERVER-SIDE via
+    `k8s--api-path-fn' (which builds the URL's `?labelSelector=');
+  - the name-regex half is applied CLIENT-SIDE here, after fetch."
   (let* ((inhibit-read-only t)
          (ctx (k8s--save-point-context))
          (conn (k8s--ensure-connection))
+         (filter eltainer-filter--state)
          (items (if (and k8s--resource-table
                          (> (hash-table-count k8s--resource-table) 0))
                     ;; Use cached items from watch
                     (vconcat (hash-table-values k8s--resource-table))
-                  ;; Fresh API call
-                  (funcall api-fn conn k8s--namespace)))
+                  ;; Fresh API call.  Prefer `k8s--api-path-fn' (which
+                  ;; bakes in the active label-selector) when set.
+                  (if k8s--api-path-fn
+                      (cdr (assq 'items
+                                 (k8s-get
+                                  conn (funcall k8s--api-path-fn
+                                                k8s--namespace))))
+                    (funcall api-fn conn k8s--namespace))))
+         (items (if (and filter
+                         (let ((nr (eltainer-filter-name-regex filter)))
+                           (and nr (not (string-empty-p nr)))))
+                    (seq-filter
+                     (lambda (it)
+                       (eltainer-filter-match-name-p
+                        filter (k8s--resource-name it)))
+                     items)
+                  items))
          (grouped (k8s--group-by-namespace items)))
     (erase-buffer)
     (setq header-line-format nil)
@@ -820,7 +864,8 @@ LINE-FN inserts one item."
                (list "%e" 'mode-line-front-space 'mode-line-mule-info
                      'mode-line-modified 'mode-line-remote " "
                      'mode-line-buffer-identification "  "
-                     '(:eval (k8s--watch-mode-line)) "  "
+                     '(:eval (k8s--watch-mode-line))
+                     '(:eval (k8s--filter-mode-line)) "  "
                      'mode-line-position 'mode-line-modes
                      'mode-line-end-spaces))
          (add-hook 'kill-buffer-hook #'k8s--watch-stop-for-buffer nil t))
@@ -833,7 +878,12 @@ LINE-FN inserts one item."
              (,mode-fn)
              (k8s--ensure-connection)
              (setq k8s--api-path-fn
-                   (lambda (ns) (k8s--list-path ',name ns)))
+                   (lambda (ns)
+                     (k8s--list-path
+                      ',name ns
+                      (and (bound-and-true-p eltainer-filter--state)
+                           (eltainer-filter-label-selector
+                            eltainer-filter--state)))))
              (,refresh-fn))
            (pop-to-buffer buf)))
 

@@ -39,12 +39,50 @@
 ;;; ---------------------------------------------------------------------------
 ;;; Container listing
 
-(cl-defun docker-list-containers (cfg &key all)
+(defun docker-list-containers--label-filter-json (selector)
+  "Translate K8s-style SELECTOR into docker engine `filters' JSON.
+Returns a single-line JSON string (the value to send as
+`?filters=...').  Docker's label filter only supports equality and
+key-presence — anything else is silently dropped with a warning,
+because the engine API has no equivalent for `!='/`!key'.
+Returns nil for an empty selector."
+  (when (and selector (not (string-empty-p selector)))
+    (let (labels skipped)
+      (dolist (term (split-string selector "," t "[ \t\n]+"))
+        (cond
+         ((string-match "\\`!" term)              (push term skipped))
+         ((string-match-p "!=" term)              (push term skipped))
+         ;; Plain `key=value' (drop optional `==' double).
+         ((string-match "\\`\\([^=]+\\)==?\\(.*\\)\\'" term)
+          (push (format "%s=%s"
+                        (match-string 1 term)
+                        (match-string 2 term))
+                labels))
+         ;; Bare key (presence).
+         ((string-match-p "\\`[A-Za-z_][A-Za-z0-9_.\\/-]*\\'" term)
+          (push term labels))
+         (t (push term skipped))))
+      (when skipped
+        (message "docker-list-containers: dropped %d unsupported \
+selector term(s) (engine API has no `!=' / `!key'): %s"
+                 (length skipped)
+                 (mapconcat #'identity (nreverse skipped) ", ")))
+      (and labels
+           (json-serialize
+            `((label . ,(apply #'vector (nreverse labels)))))))))
+
+(cl-defun docker-list-containers (cfg &key all label-selector)
   "List containers via the engine API (GET /containers/json).
 Returns a vector of `docker-container' structs (empty vector when none).
-When ALL is non-nil, include stopped containers."
-  (let ((data (docker-engine-get cfg "/containers/json"
-                                 :query (when all '(("all" . "1"))))))
+When ALL is non-nil, include stopped containers.
+When LABEL-SELECTOR is a non-empty K8s-style string, narrow
+server-side via the engine's `?filters=' query (equality / presence
+only — see `docker-list-containers--label-filter-json')."
+  (let* ((filters-json
+          (docker-list-containers--label-filter-json label-selector))
+         (query (append (when all          '(("all" . "1")))
+                        (when filters-json `(("filters" . ,filters-json)))))
+         (data (docker-engine-get cfg "/containers/json" :query query)))
     (vconcat
      (mapcar (lambda (j)
                (docker-container--new

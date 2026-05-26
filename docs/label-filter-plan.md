@@ -1,6 +1,6 @@
 # Plan: filter / narrow views by label
 
-Status: **proposal** — review before coding.
+Status: **shipped** — k8s + docker containers view both support `F`.
 
 ## Goal
 
