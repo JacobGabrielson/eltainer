@@ -1,6 +1,6 @@
 # Plan: Helm chart support (read-only first)
 
-Status: **proposal** — review before coding.
+Status: **v1 shipped** — read-only list / values / manifest.  v2 (writable upgrade / rollback) still proposal.
 
 ## Goal
 

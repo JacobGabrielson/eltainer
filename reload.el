@@ -44,7 +44,8 @@
     "k8s-dired"
     "k8s-pods"
     "k8s-exec"
-    "k8s")
+    "k8s"
+    "k8s-helm")
   "K8s-side modules in load order (dependencies first).")
 
 (defun eltainer-reload ()

@@ -227,6 +227,7 @@ k8s/
                          container subsections, inline metrics
   k8s-fs.el              Pod-fs backend (list / stat / cat over k8s-exec)
   k8s-dired.el           Dired-mode buffer over a pod container's filesystem
+  k8s-helm.el            Read-only Helm 3 view (decodes release secrets directly)
   k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```

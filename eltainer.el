@@ -45,7 +45,8 @@
       ("m" "ConfigMaps"    k8s-configmaps)
       ("x" "Secrets"       k8s-secrets)
       ("o" "Nodes"         k8s-nodes)
-      ("A" "Sandboxes"     k8s-sandboxes))))
+      ("A" "Sandboxes"     k8s-sandboxes)
+      ("H" "Helm releases" k8s-helm))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).")
 
 (defvar eltainer-mode-map (make-sparse-keymap)

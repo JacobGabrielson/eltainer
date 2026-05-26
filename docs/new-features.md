@@ -50,17 +50,17 @@ when a filter is active.
 
 ---
 
-## Helm chart support  *(status: proposal — see [docs/helm-plan.md](helm-plan.md))*
+## Helm chart support  *(status: v1 shipped — see [docs/helm-plan.md](helm-plan.md))*
 
-Read-only listing of Helm 3 releases, decoded straight from the
-release secrets the API server already exposes (`type=helm.sh/release.v1`,
-`owner=helm`).  No `helm` CLI shelled out — keeps the "no CLI"
-invariant.  v1 is list + describe + view values; v2 might add
-upgrade once we figure out how to do that without a CLI (probably
-shipping the rendered manifests to `kubectl apply`-equivalent via
-the API).
+v1 (read-only) is live:
+- `H` in the dashboard, `?` then `Helm releases` from any k8s view.
+- Lists the active revision of every release (server-side
+  `owner=helm,status!=superseded` selector).
+- `v` views the release's `values.yaml`; `m` views the rendered
+  manifest; `RET` expands the row to show NOTES.txt.
 
-See the linked plan for the design.
+v2 (upgrade / rollback / uninstall) deferred — needs Go-template +
+sprig rendering that Elisp can't reproduce cleanly.
 
 ---
 
