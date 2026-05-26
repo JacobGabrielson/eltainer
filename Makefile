@@ -2,11 +2,14 @@
 # to wipe stale .elc files before a fresh byte-compile (the user
 # normally byte-compiles via `M-x eltainer-reload' from inside Emacs).
 
-.PHONY: clean compile help
+.PHONY: clean compile test test-unit test-all help
 
 help:
-	@echo "make clean   - delete every .elc file in the tree"
-	@echo "make compile - clean + byte-compile every .el file"
+	@echo "make clean     - delete every .elc file in the tree"
+	@echo "make compile   - clean + byte-compile every .el file"
+	@echo "make test      - run pure-elisp unit tests (no daemon / cluster)"
+	@echo "make test-all  - run everything, including live-daemon /"
+	@echo "                 live-cluster integration tests"
 
 clean:
 	@find . -name '*.elc' -type f -delete
@@ -22,3 +25,15 @@ compile: clean
 	                             (directory-files \"docker\" t \"\\\\.el\\\\'\") \
 	                             (directory-files \"k8s\" t \"\\\\.el\\\\'\"))) \
 	             (unless (string-match-p \"reload\\\\.el\\\\'\" f) (byte-compile-file f)))"
+
+# Pure-elisp tests — no docker daemon, no kubeconfig required.
+# Loads only the top-level `test/test-*.el' files (skipping the
+# subdirectory integration suites).
+test:
+	@ELTAINER_TEST_MODE=unit emacs -Q --batch -l test/run-tests.el
+
+# Everything, including the live-daemon (test/docker/) and live-cluster
+# (test/k8s/) integration tests.  Skips individual tests cleanly when
+# the daemon / cluster isn't reachable; doesn't fail the whole suite.
+test-all:
+	@ELTAINER_TEST_MODE=integration emacs -Q --batch -l test/run-tests.el

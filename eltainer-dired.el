@@ -163,8 +163,11 @@ than `expand-file-name' so sentinel-shaped paths don't get mangled."
      ((or (null basename) (equal basename "")) cur)
      ((equal basename ".") cur)
      ((equal basename "..")
-      (let ((parent (file-name-directory (directory-file-name cur))))
-        (or parent "/")))
+      (let* ((parent (file-name-directory (directory-file-name cur)))
+             (norm (and parent (directory-file-name parent))))
+        (cond ((null norm) "/")
+              ((equal norm "") "/")
+              (t norm))))
      ((string-prefix-p "/" basename) basename)
      (t
       (concat (file-name-as-directory cur) basename)))))
