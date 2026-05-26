@@ -645,6 +645,41 @@ response updates the cache and schedules a debounced re-render."
                            (docker-container-id c)
                            (docker-container-name c))))
 
+(defvar docker-container-dns--history nil
+  "Hostname-completion history for `docker-container-dns-lookup-at-point'.")
+
+(autoload 'eltainer-net-lookup-dns       "eltainer-net" nil nil)
+(autoload 'eltainer-net-format-dns-buffer "eltainer-net" nil nil)
+(autoload 'eltainer-net-dns-result-tool   "eltainer-net" nil nil)
+(autoload 'eltainer-net-dns-result-output "eltainer-net" nil nil)
+
+(defun docker-container-dns-lookup-at-point (host)
+  "Resolve HOST from inside the container at point.
+Tries `getent hosts' → `nslookup' → dump of `/etc/resolv.conf' +
+`/etc/hosts' in that order; first probe with exit 0 wins."
+  (interactive
+   (list (read-string "DNS lookup host: "
+                      nil 'docker-container-dns--history)))
+  (require 'docker-exec)
+  (let* ((c (docker--container-at-point))
+         (cfg (docker--ensure-config))
+         (cname (docker-container-name c))
+         (run-fn (lambda (argv)
+                   (let ((r (docker-exec-run cfg cname argv)))
+                     (cons (docker-exec-result-exit-code r)
+                           (docker-exec-result-stdout r)))))
+         (result (eltainer-net-lookup-dns run-fn host))
+         (title  (format "docker:%s" cname))
+         (buf    (get-buffer-create
+                  (format "*docker:dns:%s:%s*" cname host))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (special-mode)
+        (erase-buffer)
+        (insert (eltainer-net-format-dns-buffer title host result))
+        (goto-char (point-min))))
+    (pop-to-buffer buf)))
+
 ;; Bind in the containers view (j = join, J = jettison).
 (keymap-set docker-containers-mode-map "j" #'docker-network-connect-at-point)
 (keymap-set docker-containers-mode-map "J" #'docker-network-disconnect-at-point)
@@ -652,6 +687,7 @@ response updates the cache and schedules a debounced re-render."
 (keymap-set docker-containers-mode-map "M" #'docker-container-metrics-at-point)
 (autoload 'docker-dired-browse-at-point "docker-dired" nil t)
 (keymap-set docker-containers-mode-map "f" #'docker-dired-browse-at-point)
+(keymap-set docker-containers-mode-map "D" #'docker-container-dns-lookup-at-point)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Transient dispatch

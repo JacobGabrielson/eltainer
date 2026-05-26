@@ -14,6 +14,7 @@
 (require 'k8s-api)
 (require 'k8s-dired)
 (require 'k8s-metrics)
+(require 'eltainer-net)
 
 ;; Declared up here so `k8s--insert-pod-details' (which reads the cache
 ;; to draw gauges) compiles without a free-variable warning; the
@@ -611,6 +612,46 @@ covers every container in the pod either way."
                         (k8s--resource-namespace pod)
                         (k8s--resource-name pod))))
 
+(defvar k8s-pod-dns--history nil
+  "Hostname-completion history for `k8s-pod-dns-lookup-at-point'.")
+
+(defun k8s-pod-dns-lookup-at-point (host)
+  "Resolve HOST inside the pod (or container) at point.
+Tries `getent hosts' → `nslookup' → dump of `/etc/resolv.conf' +
+`/etc/hosts' in that order; first probe with exit 0 wins.  Output
+pops a read-only buffer.
+
+Prompts for HOST; pre-fills with the last lookup from this session."
+  (interactive
+   (list (read-string "DNS lookup host: " nil 'k8s-pod-dns--history)))
+  (let* ((target (k8s--pod+container-at-point))
+         (pod (car target))
+         (preselected (cdr target))
+         (name (k8s--resource-name pod))
+         (ns (k8s--resource-namespace pod))
+         (containers (k8s--pod-container-names pod))
+         (container (or preselected
+                        (and containers
+                             (k8s--read-pod-container "DNS lookup in" ns name
+                                                      pod containers))))
+         (conn (k8s--ensure-connection))
+         (run-fn (lambda (argv)
+                   (let ((r (k8s-exec conn ns name container argv)))
+                     (cons (k8s-exec-result-exit-code r)
+                           (k8s-exec-result-stdout r)))))
+         (result (eltainer-net-lookup-dns run-fn host))
+         (title (format "k8s:%s/%s%s" ns name
+                        (if container (format "[%s]" container) "")))
+         (buf (get-buffer-create
+               (format "*k8s:dns:%s/%s:%s*" ns name host))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (special-mode)
+        (erase-buffer)
+        (insert (eltainer-net-format-dns-buffer title host result))
+        (goto-char (point-min))))
+    (pop-to-buffer buf)))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Major mode
 
@@ -627,7 +668,8 @@ covers every container in the pod either way."
                  ("e" k8s-pod-exec-at-point)
                  ("f" k8s-dired-browse-at-point)
                  ("M" k8s-pod-metrics-at-point)
-                 ("L" k8s-pods-multilog-marked)))
+                 ("L" k8s-pods-multilog-marked)
+                 ("D" k8s-pod-dns-lookup-at-point)))
   (keymap-set k8s-pods-mode-map k cmd))
 
 (define-derived-mode k8s-pods-mode magit-section-mode "K8s:Pods"

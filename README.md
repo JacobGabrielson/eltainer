@@ -74,6 +74,7 @@ dashboard if that's what you want.
 | `e` | Exec a shell inside the container (TTY) |
 | `f` | Browse the container's filesystem (real dired-mode buffer; containers view) |
 | In the FS browser: `D R C + I C-x C-q` | Delete / rename / copy / mkdir / import-from-host / wdired |
+| `D` | DNS lookup from inside the container (`getent` → `nslookup` → `/etc/resolv.conf`+`/etc/hosts`) |
 | `M` | Per-container metrics buffer (containers view) |
 | `j` `J` | Join / leave a network |
 
@@ -110,6 +111,7 @@ metrics buffer for the container.
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Browse the pod's filesystem (real dired-mode buffer; pods view only) |
 | In the FS browser: `D R C + I C-x C-q` | Delete / rename / copy / mkdir / import-from-host / wdired |
+| `D` | DNS lookup from inside the pod (`getent` → `nslookup` → `/etc/resolv.conf`+`/etc/hosts`) |
 | `M` | Per-pod metrics buffer (pods view only) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
@@ -183,6 +185,7 @@ eltainer-ui.el           Shared faces, age-string, describe-value
 eltainer-gauge.el        Shared text gauges + sparklines for the metrics views
 eltainer-fs.el           Shared FS-listing scripts + entry struct + parser
 eltainer-dired.el        Shared dired-mode parent for the FS browser
+eltainer-net.el          Shared DNS-lookup chain (getent / nslookup / fallback)
 eltainer-terminal.el     eat-backed terminal host for interactive exec
 eltainer-shell-helper.el Invoke external helpers (cred / exec plugins)
 reload.el                Dev helper: byte-compile + reload both halves

@@ -37,37 +37,6 @@ Each new arm is ~5 lines plus the property at the render site.
 
 ---
 
-## DNS-lookup view from a container's perspective  *(status: drafted)*
-
-When debugging Service / Ingress / NetworkPolicy issues you often
-want to resolve a hostname *from inside a specific pod*
-(`nslookup bookstore-api.bookstore.svc.cluster.local`).  Today the
-only way is `e` → shell → type the command — too many steps.
-
-Plan:
-- New command `k8s-pod-dns-lookup-at-point` (bound to `D` in pods,
-  or `?` dispatch entry "DNS lookup").  Prompts for a hostname (or
-  picks one from a recent-Services history).
-- Implementation tries, in order:
-  1. `getent hosts <host>` — works on glibc/musl images.
-  2. `nslookup <host>` — works on busybox / alpine.
-  3. `cat /etc/resolv.conf; cat /etc/hosts` — fallback "tell me what
-     the pod thinks DNS even *is*".
-  Picks the first one with `exit=0` and shows the output in a small
-  popup buffer.
-- Distroless: friendly error pointing the user to the
-  ephemeral-debug-container path (`docs/container-dired-plan.md`
-  §10) once that lands.  For now: "this image has no DNS tools".
-- Same plumbing as `k8s-exec` (already sync, captures stdout/stderr).
-  ~50 lines plus the buffer.
-- Docker analogue: `docker-container-dns-lookup-at-point` bound to
-  `D` in `docker-containers-mode-map`.  Same shape, different
-  backend.
-- Tests: unit-test the response parser; integration test against a
-  live pod with `getent`.
-
----
-
 ## Filter / narrow views by label  *(status: proposal — see [docs/label-filter-plan.md](label-filter-plan.md))*
 
 User wants a magit-style way to narrow a view to resources matching
