@@ -109,6 +109,99 @@ Signals if the first entry isn't a regular file."
      (t
       (error "docker-fs-cat: %s — unsupported tar entry type %S" path typeflag)))))
 
+;;; ---------------------------------------------------------------------------
+;;; Archive-API-backed write (host -> container)
+;;
+;; PUT /containers/<id>/archive?path=<dir> with a tar of one or more
+;; entries in the request body unpacks them at <dir> inside the
+;; container.  Works on distroless / scratch (no in-container tools
+;; required).  Single-file writer for now; multi-file batched copy
+;; can come later when wdired needs it.
+
+(defun docker-fs--tar-octal (n width)
+  "Format integer N as a left-zero-padded WIDTH-char octal string
+followed by NUL, the way USTAR numeric fields are encoded."
+  (concat (format (format "%%0%do" width) n)
+          (string 0)))
+
+(defun docker-fs--tar-checksum (header)
+  "Sum the bytes in HEADER (treating the 8-byte checksum field
+itself as spaces, per the USTAR spec)."
+  (let ((sum 0))
+    (dotimes (i 512)
+      (cl-incf sum
+               (if (and (>= i 148) (< i 156)) 32
+                 (aref header i))))
+    sum))
+
+(defun docker-fs--make-tar-file-header (name size mode)
+  "Build one 512-byte USTAR header for a regular file NAME of SIZE
+bytes with octal MODE (e.g. #o644)."
+  (let* ((header (make-string 512 0))
+         (name-bytes (encode-coding-string name 'utf-8))
+         (i 0))
+    (cl-loop for c across name-bytes
+             while (< i 99)
+             do (aset header i c) (cl-incf i))
+    ;; mode (offset 100, 8 bytes)
+    (let ((m (docker-fs--tar-octal mode 7)))
+      (dotimes (j (length m)) (aset header (+ 100 j) (aref m j))))
+    ;; uid / gid (offsets 108 / 116, 8 bytes each) — leave as zero (root).
+    (let ((z (docker-fs--tar-octal 0 7)))
+      (dotimes (j (length z))
+        (aset header (+ 108 j) (aref z j))
+        (aset header (+ 116 j) (aref z j))))
+    ;; size (offset 124, 12 bytes)
+    (let ((s (docker-fs--tar-octal size 11)))
+      (dotimes (j (length s)) (aset header (+ 124 j) (aref s j))))
+    ;; mtime (offset 136, 12 bytes) — now
+    (let ((t- (docker-fs--tar-octal (truncate (float-time)) 11)))
+      (dotimes (j (length t-)) (aset header (+ 136 j) (aref t- j))))
+    ;; typeflag '0' = regular file (offset 156)
+    (aset header 156 ?0)
+    ;; ustar magic + version (offset 257..264)
+    (let ((m "ustar\000" ))
+      (dotimes (j (length m)) (aset header (+ 257 j) (aref m j))))
+    (aset header 263 ?0) (aset header 264 ?0)
+    ;; checksum field: 6 octal digits + NUL + space (offset 148)
+    (let* ((sum (docker-fs--tar-checksum header))
+           (csum (concat (format "%06o" sum) (string 0) " ")))
+      (dotimes (j (length csum)) (aset header (+ 148 j) (aref csum j))))
+    header))
+
+(defun docker-fs--make-tar (name bytes &optional mode)
+  "Build a one-entry USTAR archive (`name', `bytes', `mode' #o644 by
+default), terminated by two 512-byte NUL blocks."
+  (let* ((size (length bytes))
+         (header (docker-fs--make-tar-file-header
+                  name size (or mode #o644)))
+         (pad-len (mod (- 512 (mod size 512)) 512))
+         (pad (make-string pad-len 0))
+         (terminator (make-string 1024 0)))
+    (concat header bytes pad terminator)))
+
+(defun docker-fs-put (cfg container dir name bytes &optional mode)
+  "Upload BYTES into CONTAINER at DIR/NAME via the archive PUT API.
+DIR is the absolute directory inside the container; NAME is the
+file's basename (no slashes).  MODE defaults to #o644.
+
+PUT /containers/<id>/archive?path=DIR with the body a tar that
+contains one file called NAME.  No in-container tooling required —
+works on distroless / scratch.  Signals on non-2xx."
+  (when (string-match-p "/" name)
+    (error "docker-fs-put: NAME must be a basename (got %S)" name))
+  (let* ((tar (docker-fs--make-tar name bytes (or mode #o644)))
+         (full (concat (docker--api-prefix cfg)
+                       (format "/containers/%s/archive" container)))
+         (resp (docker-http-request
+                cfg "PUT" full
+                :query `(("path" . ,dir))
+                :headers '(("Content-Type" . "application/x-tar"))
+                :body tar)))
+    (unless (docker-http-ok-p resp)
+      (docker--engine-error resp full))
+    nil))
+
 (defun docker-fs-cat (cfg container path &optional max-bytes)
   "Return the contents of regular file PATH inside CONTAINER via CFG.
 Uses the Docker archive API so the container doesn't need a `sh' or

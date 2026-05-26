@@ -36,14 +36,26 @@ Triggered by `f' on a container row in the docker containers view
 (defun docker-dired-browse (cfg container &optional initial-dir)
   "Open a `docker-dired-mode' buffer at INITIAL-DIR inside CONTAINER.
 CFG is a `docker-config'; CONTAINER is the daemon-side container
-name or id.  INITIAL-DIR defaults to `/'."
+name or id.  INITIAL-DIR defaults to `/'.
+
+Wires the v2 writable ops as well: `exec-fn' / `check-fn' /
+`write-fn' route through `docker-exec-run' and the archive PUT API."
   (let* ((dir (or initial-dir "/"))
          (label (format "docker:%s" container))
          (prefix (format "/docker:%s:" container))
-         (list-fn (lambda (path) (docker-fs-list cfg container path)))
-         (cat-fn  (lambda (path) (docker-fs-cat  cfg container path))))
-    (eltainer-dired-open label prefix dir list-fn cat-fn
-                         :mode #'docker-dired-mode)))
+         (list-fn  (lambda (path) (docker-fs-list cfg container path)))
+         (cat-fn   (lambda (path) (docker-fs-cat  cfg container path)))
+         (exec-fn  (lambda (argv) (docker-exec-run cfg container argv)))
+         (check-fn #'docker-fs--check)
+         (write-fn (lambda (remote-dir basename bytes)
+                     (docker-fs-put cfg container remote-dir basename bytes)))
+         (buf (eltainer-dired-open label prefix dir list-fn cat-fn
+                                   :mode #'docker-dired-mode)))
+    (with-current-buffer buf
+      (setq-local eltainer-dired--exec-fn  exec-fn
+                  eltainer-dired--check-fn check-fn
+                  eltainer-dired--write-fn write-fn))
+    buf))
 
 ;;;###autoload
 (defun docker-dired-browse-at-point ()

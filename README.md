@@ -73,6 +73,7 @@ dashboard if that's what you want.
 | `l` | Tail logs (streaming, stdout / stderr demuxed) |
 | `e` | Exec a shell inside the container (TTY) |
 | `f` | Browse the container's filesystem (real dired-mode buffer; containers view) |
+| In the FS browser: `D R C + I C-x C-q` | Delete / rename / copy / mkdir / import-from-host / wdired |
 | `M` | Per-container metrics buffer (containers view) |
 | `j` `J` | Join / leave a network |
 
@@ -107,6 +108,7 @@ metrics buffer for the container.
 | `L` | Multipod tail of every marked pod (pods view) |
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Browse the pod's filesystem (real dired-mode buffer; pods view only) |
+| In the FS browser: `D R C + I C-x C-q` | Delete / rename / copy / mkdir / import-from-host / wdired |
 | `M` | Per-pod metrics buffer (pods view only) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |

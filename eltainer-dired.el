@@ -91,6 +91,28 @@ Builders cons the remote path on the end to form a full sentinel.")
   "Short identity used in the mode-line and buffer name, e.g.
 `docker:eltainer-ticker'.")
 
+(defvar-local eltainer-dired--exec-fn nil
+  "Closure (lambda (ARGV)) running ARGV in this buffer's container.
+Returns the backend's result struct (docker-exec-result or
+k8s-exec-result).  Required for v2 writable ops; nil for read-only
+buffers that haven't wired one up.")
+
+(defvar-local eltainer-dired--check-fn nil
+  "Closure (lambda (RESULT CONTEXT)) signalling on RESULT failure.
+Set by the child mode; differs across backends because the result
+structs carry different keyword fields.  See `docker-fs--check' and
+`k8s-fs--check' for the canonical implementations.")
+
+(defvar-local eltainer-dired--write-fn nil
+  "Closure (lambda (REMOTE-DIR BASENAME BYTES)) writing BYTES into
+the container at REMOTE-DIR / BASENAME.  Docker uses the archive
+PUT API; k8s rides base64 through argv.  Optional — used only by
+host -> container copy.")
+
+(defvar-local eltainer-dired--probed nil
+  "Non-nil once we've verified rm / mv / mkdir / cp exist in this
+container.  See `eltainer-dired--ensure-write-binaries'.")
+
 ;;; ---------------------------------------------------------------------------
 ;;; ls -al text synthesis
 
@@ -146,8 +168,14 @@ Header is the current `default-directory' followed by a `total 0' line
                                     (eltainer-fs-entry-name a)
                                     (eltainer-fs-entry-name b)))))))))
     (erase-buffer)
-    (insert "  " (directory-file-name default-directory) ":\n"
-            "  total 0\n")
+    (let ((header-start (point-marker)))
+      (insert "  " (directory-file-name default-directory) ":\n"
+              "  total 0\n")
+      ;; Dired keys off `dired-subdir-alist' to answer
+      ;; `dired-current-directory' (and thus `dired-get-marked-files');
+      ;; we have one subdir per buffer, headed at HEADER-START.
+      (setq-local dired-subdir-alist
+                  (list (cons default-directory header-start))))
     (dolist (e sorted)
       (insert (eltainer-dired--emit-line e)))))
 
@@ -289,11 +317,311 @@ Other types error rather than misbehave."
     (goto-char (min point (point-max)))))
 
 (defun eltainer-dired-not-implemented ()
-  "v1 read-only guard for dired bindings we don't yet route through
-the container backends.  See docs/container-dired-plan.md §7."
+  "Guard for dired bindings that touch metadata ops we don't route
+through the container backends (chmod / chown / touch / symlink /
+hardlink / compress).  See docs/container-dired-plan.md §8."
   (interactive)
   (user-error
-   "eltainer-dired v1 is read-only — see docs/container-dired-plan.md §8 (writable v2)"))
+   "eltainer-dired: %s is not in scope (chmod / chown / touch etc.)"
+   (key-description (this-command-keys))))
+
+;;; ---------------------------------------------------------------------------
+;;; Writable v2 ops
+;;
+;; Each op routes through `eltainer-dired--exec-fn' + `--check-fn'
+;; (set by the child mode) which run a shell command inside the
+;; container.  Marked-file aware — they take their cue from
+;; `dired-get-marked-files', so the standard dired mark UX
+;; (m / u / U / t / DEL / etc.) feeds straight through.
+
+(defun eltainer-dired--ensure-ops ()
+  "Signal if this buffer has no writable-op backends wired up.
+Called at the top of every write entry point so the failure is loud."
+  (unless (and eltainer-dired--exec-fn eltainer-dired--check-fn)
+    (user-error "eltainer-dired: this buffer is read-only \
+\(no exec backend wired up)")))
+
+(defun eltainer-dired--run-checked (argv context)
+  "Run ARGV via `eltainer-dired--exec-fn' and signal on failure."
+  (let ((r (funcall eltainer-dired--exec-fn argv)))
+    (funcall eltainer-dired--check-fn r context)
+    r))
+
+(defun eltainer-dired--ensure-write-binaries ()
+  "Verify rm / mv / mkdir / cp all exist in this buffer's container,
+lazily and cached on the buffer.  Distroless / scratch surfaces a
+single friendly error instead of one per missing binary."
+  (unless eltainer-dired--probed
+    (eltainer-dired--ensure-ops)
+    (condition-case err
+        (eltainer-dired--run-checked
+         (list "sh" "-c" eltainer-fs-write-probe-script)
+         "probe rm / mv / mkdir / cp")
+      (error
+       (user-error
+        "eltainer-dired: this container lacks one of `rm', `mv', \
+`mkdir', `cp' (distroless or scratch image) — writable ops require \
+a POSIX shell + coreutils.  Detail: %s"
+        (error-message-string err))))
+    (setq eltainer-dired--probed t)))
+
+(defun eltainer-dired--marked-remote-paths ()
+  "Return the list of container-side remote paths for the marked
+files \(or for the file at point if nothing is marked).  Sentinel
+paths returned by `dired-get-marked-files' are parsed back into
+absolute container paths."
+  (let* ((files (dired-get-marked-files nil nil nil nil t)) ; t = current line if no marks
+         (out nil))
+    (dolist (f files)
+      (let ((info (eltainer-dired-parse-path f)))
+        (push (or (plist-get info :remote) f) out)))
+    (nreverse out)))
+
+(defun eltainer-dired--current-remote-path ()
+  "Return the remote path on the current line, or signal."
+  (let* ((basename (eltainer-dired--name-at-point))
+         (remote (and basename (eltainer-dired--resolve-name basename))))
+    (or remote (user-error "No entry on this line"))))
+
+(defun eltainer-dired-do-delete (&optional _arg)
+  "Delete the marked files (or file at point) inside the container.
+Uses `rm -rf' via the buffer's exec backend, after a yes-or-no
+confirmation listing each path."
+  (interactive "P")
+  (eltainer-dired--ensure-ops)
+  (eltainer-dired--ensure-write-binaries)
+  (let* ((paths (eltainer-dired--marked-remote-paths))
+         (n (length paths)))
+    (when (zerop n) (user-error "No files marked or at point"))
+    (when (yes-or-no-p
+           (format "Delete %d %s? (%s)"
+                   n (if (= n 1) "file" "files")
+                   (mapconcat #'identity (seq-take paths 4) ", ")))
+      (dolist (p paths)
+        (eltainer-dired--run-checked
+         (list "rm" "-rf" "--" p) (format "delete %s" p)))
+      (message "eltainer-dired: deleted %d" n)
+      (eltainer-dired-revert))))
+
+(defun eltainer-dired--read-target (prompt &optional default)
+  "Prompt for a destination path.  Treat as remote unless it parses
+back into a sentinel \(then strip the prefix), and resolve relative
+paths against the current remote-dir."
+  (let* ((raw (read-string prompt default))
+         (info (eltainer-dired-parse-path raw))
+         (path (cond
+                (info (plist-get info :remote))
+                ((file-name-absolute-p raw) raw)
+                (t (concat (file-name-as-directory
+                            eltainer-dired--remote-dir)
+                           raw)))))
+    path))
+
+(defun eltainer-dired-do-rename ()
+  "Rename / move the marked files (or file at point).
+Single file: prompts for a new path.  Multiple: prompts for a
+destination directory and moves every marked file into it,
+preserving basenames."
+  (interactive)
+  (eltainer-dired--ensure-ops)
+  (eltainer-dired--ensure-write-binaries)
+  (let* ((paths (eltainer-dired--marked-remote-paths))
+         (n (length paths)))
+    (when (zerop n) (user-error "No files marked or at point"))
+    (cond
+     ((= n 1)
+      (let* ((src (car paths))
+             (dst (eltainer-dired--read-target
+                   (format "Rename %s to: " src) src)))
+        (when (equal src dst)
+          (user-error "Rename to the same path is a no-op"))
+        (eltainer-dired--run-checked
+         (list "mv" "--" src dst) (format "rename %s -> %s" src dst))
+        (message "eltainer-dired: renamed %s -> %s" src dst)))
+     (t
+      (let* ((dst-dir (eltainer-dired--read-target
+                       (format "Move %d files to dir: " n))))
+        (dolist (src paths)
+          (let ((target (concat (file-name-as-directory dst-dir)
+                                (file-name-nondirectory src))))
+            (eltainer-dired--run-checked
+             (list "mv" "--" src target)
+             (format "rename %s -> %s" src target))))
+        (message "eltainer-dired: moved %d files to %s" n dst-dir))))
+    (eltainer-dired-revert)))
+
+(defun eltainer-dired-create-directory (path)
+  "Create directory PATH inside the container (recursive `mkdir -p').
+Relative PATH is resolved against the current remote-dir."
+  (interactive
+   (list (read-string
+          (format "Create directory (rel to %s): "
+                  (or eltainer-dired--remote-dir "/")))))
+  (eltainer-dired--ensure-ops)
+  (eltainer-dired--ensure-write-binaries)
+  (when (or (null path) (string-empty-p path))
+    (user-error "Empty directory name"))
+  (let ((remote (if (file-name-absolute-p path) path
+                  (concat (file-name-as-directory
+                           (or eltainer-dired--remote-dir "/"))
+                          path))))
+    (eltainer-dired--run-checked
+     (list "mkdir" "-p" "--" remote) (format "mkdir %s" remote))
+    (message "eltainer-dired: created %s" remote)
+    (eltainer-dired-revert)))
+
+(defun eltainer-dired-do-copy ()
+  "Copy the marked files (or file at point).
+
+Destination grammar:
+  bare-name / `/abs/path' → in-container `cp -r' (default).
+  `host:/abs/path'        → export to host via `cat-fn'.
+  sentinel /docker:.../   → in-container only when same container.
+
+The `host:' prefix is explicit on purpose; without it absolute paths
+mean inside the container, which matches the buffer's mental model."
+  (interactive)
+  (eltainer-dired--ensure-ops)
+  (let* ((paths (eltainer-dired--marked-remote-paths))
+         (n (length paths)))
+    (when (zerop n) (user-error "No files marked or at point"))
+    (let* ((prompt (if (= n 1)
+                       (format "Copy %s to: " (car paths))
+                     (format "Copy %d files to dir: " n)))
+           (raw (read-string prompt))
+           (info (eltainer-dired-parse-path raw)))
+      (cond
+       ;; Explicit host export
+       ((string-prefix-p "host:" raw)
+        (eltainer-dired--copy-to-host
+         paths (substring raw (length "host:")) n))
+       ;; Same-container sentinel (we don't support cross-container)
+       (info
+        (unless (or (and (eq 'docker (plist-get info :backend))
+                         (string-prefix-p
+                          (format "/docker:%s:"
+                                  (plist-get info :container))
+                          eltainer-dired--sentinel-prefix))
+                    (and (eq 'k8s (plist-get info :backend))
+                         (string-prefix-p
+                          (format "/k8s:%s/%s"
+                                  (plist-get info :ns)
+                                  (plist-get info :pod))
+                          eltainer-dired--sentinel-prefix)))
+          (user-error
+           "eltainer-dired: cross-container copy not supported \
+\(prefix `host:' to export to disk first)"))
+        (eltainer-dired--copy-in-container
+         paths (plist-get info :remote) n))
+       ;; Bare relative name       → in-container cp under cwd
+       ((not (string-prefix-p "/" raw))
+        (let ((dst (concat (file-name-as-directory
+                            (or eltainer-dired--remote-dir "/"))
+                           raw)))
+          (eltainer-dired--copy-in-container paths dst n)))
+       ;; Absolute path            → in-container cp
+       (t
+        (eltainer-dired--copy-in-container paths raw n)))
+      (eltainer-dired-revert))))
+
+(defun eltainer-dired--copy-in-container (paths dst n)
+  "In-container `cp -r' from each PATHS into DST.  Uses the exec backend."
+  (eltainer-dired--ensure-write-binaries)
+  (if (= n 1)
+      (let ((src (car paths)))
+        (eltainer-dired--run-checked
+         (list "cp" "-r" "--" src dst) (format "cp %s -> %s" src dst))
+        (message "eltainer-dired: copied %s -> %s" src dst))
+    (dolist (src paths)
+      (eltainer-dired--run-checked
+       (list "cp" "-r" "--" src dst)
+       (format "cp %s -> %s/" src dst)))
+    (message "eltainer-dired: copied %d files into %s" n dst)))
+
+(defun eltainer-dired-import-from-host ()
+  "Import a host-side file into the container at the current dir.
+Prompts for the host filename and writes it via `--write-fn'.
+On docker that PUTs through the archive API; on k8s that base64-
+encodes through argv (with a size cap)."
+  (interactive)
+  (eltainer-dired--ensure-ops)
+  (unless eltainer-dired--write-fn
+    (user-error "eltainer-dired: this buffer has no write backend"))
+  (let* ((host (read-file-name
+                "Import host file into this directory: " nil nil t))
+         (basename (file-name-nondirectory host))
+         (bytes (with-temp-buffer
+                  (set-buffer-multibyte nil)
+                  (let ((coding-system-for-read 'binary))
+                    (insert-file-contents-literally host))
+                  (buffer-substring-no-properties (point-min) (point-max))))
+         (dst-dir (or eltainer-dired--remote-dir "/")))
+    (funcall eltainer-dired--write-fn dst-dir basename bytes)
+    (message "eltainer-dired: imported %s -> %s%s"
+             host (file-name-as-directory dst-dir) basename)
+    (eltainer-dired-revert)))
+
+(defun eltainer-dired--copy-to-host (paths host-dst n)
+  "Read each remote PATHS via `--cat-fn' and write to HOST-DST.
+If N > 1, HOST-DST is treated as a directory."
+  (unless eltainer-dired--cat-fn
+    (user-error "eltainer-dired: no cat backend wired up"))
+  (let ((dir-mode (or (> n 1) (file-directory-p host-dst))))
+    (dolist (src paths)
+      (let* ((bytes (funcall eltainer-dired--cat-fn src))
+             (target (if dir-mode
+                         (expand-file-name (file-name-nondirectory src)
+                                           host-dst)
+                       host-dst))
+             (coding-system-for-write 'binary))
+        (with-temp-buffer
+          (set-buffer-multibyte nil)
+          (insert (or bytes ""))
+          (write-region (point-min) (point-max) target nil 'quiet))))
+    (message "eltainer-dired: copied %d to host %s" n host-dst)))
+
+;;; ---------------------------------------------------------------------------
+;;; wdired support — buffer-edit-to-rename
+;;
+;; Standard wdired calls `wdired-do-renames' with a list of (FROM . TO)
+;; pairs and then `rename-file' for each.  `rename-file' goes through
+;; `file-name-handler-alist'; sentinel paths aren't registered, so the
+;; renames would hit the underlying POSIX syscall and fail.  We
+;; intercept `wdired-do-renames' for our buffers and route every pair
+;; through the exec backend instead.
+
+(defun eltainer-dired--wdired-do-renames (orig-fn renames)
+  "Around-advice for `wdired-do-renames': in `eltainer-dired-mode'
+buffers, emit one `mv' exec per renamed line; otherwise defer to
+the original."
+  (if (derived-mode-p 'eltainer-dired-mode)
+      (progn
+        (eltainer-dired--ensure-ops)
+        (eltainer-dired--ensure-write-binaries)
+        (let ((count 0))
+          (dolist (pair renames)
+            (let* ((from-raw (car pair))
+                   (to-raw   (cdr pair))
+                   (from (or (plist-get (eltainer-dired-parse-path from-raw)
+                                        :remote)
+                             from-raw))
+                   (to   (or (plist-get (eltainer-dired-parse-path to-raw)
+                                        :remote)
+                             to-raw)))
+              (unless (equal from to)
+                (eltainer-dired--run-checked
+                 (list "mv" "--" from to)
+                 (format "wdired rename %s -> %s" from to))
+                (cl-incf count))))
+          (message "eltainer-dired: wdired applied %d rename%s"
+                   count (if (= count 1) "" "s"))
+          nil))                            ; suppress orig
+    (funcall orig-fn renames)))
+
+(with-eval-after-load 'wdired
+  (advice-add 'wdired-do-renames :around
+              #'eltainer-dired--wdired-do-renames))
+
 
 ;;; ---------------------------------------------------------------------------
 ;;; Major mode
@@ -305,11 +633,16 @@ the container backends.  See docs/container-dired-plan.md §7."
     (define-key map (kbd "f")   #'eltainer-dired-find-file)
     (define-key map (kbd "e")   #'eltainer-dired-find-file)
     (define-key map (kbd "^")   #'eltainer-dired-up-directory)
-    ;; v1 read-only guards: rebind dired's write operations to a
-    ;; user-error pointing at the plan doc.
-    (dolist (key '("D" "R" "C" "+" "M" "O" "T" "S" "H" "Z"))
+    ;; v2 writable ops (all route through the buffer's exec backend).
+    (define-key map (kbd "D") #'eltainer-dired-do-delete)
+    (define-key map (kbd "R") #'eltainer-dired-do-rename)
+    (define-key map (kbd "C") #'eltainer-dired-do-copy)
+    (define-key map (kbd "+") #'eltainer-dired-create-directory)
+    (define-key map (kbd "I") #'eltainer-dired-import-from-host)
+    ;; Out of scope: metadata ops we haven't wired.  Keep them loud
+    ;; rather than silently no-op so users know what's missing.
+    (dolist (key '("M" "O" "T" "S" "H" "Z"))
       (define-key map (kbd key) #'eltainer-dired-not-implemented))
-    (define-key map (kbd "C-x C-q") #'eltainer-dired-not-implemented)
     map)
   "Keymap for `eltainer-dired-mode'.  Inherits dired-mode-map for
 the navigation + marking surface; overrides the write ops.")
@@ -379,7 +712,8 @@ Pops the buffer."
         (eltainer-dired--render entries))
       (goto-char (point-min))
       (forward-line 2))                ; past header + `total 0'
-    (pop-to-buffer buf)))
+    (pop-to-buffer buf)
+    buf))
 
 (provide 'eltainer-dired)
 ;;; eltainer-dired.el ends here

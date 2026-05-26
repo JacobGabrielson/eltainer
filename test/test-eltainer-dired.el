@@ -131,5 +131,41 @@ the mode entry function reset it to `-al' and names come back intact."
             (should-not (member "hostnam" names)))
         (setq-default dired-listing-switches "-al")))))
 
+;;; ---------------------------------------------------------------------------
+;;; v2 writable ops — pure-elisp guard tests (no exec needed)
+
+(ert-deftest eltainer-dired/v2-ensure-ops-errors-without-backend ()
+  "Calling a write op in a buffer with no exec-fn / check-fn signals."
+  (with-temp-buffer
+    (eltainer-dired-mode)
+    (should-error (eltainer-dired--ensure-ops) :type 'user-error)))
+
+(ert-deftest eltainer-dired/v2-ensure-ops-passes-with-backend ()
+  (with-temp-buffer
+    (eltainer-dired-mode)
+    (setq-local eltainer-dired--exec-fn  (lambda (_) nil)
+                eltainer-dired--check-fn (lambda (_ _) nil))
+    (should-not (eltainer-dired--ensure-ops))))
+
+(ert-deftest eltainer-dired/v2-marked-remote-paths-strips-prefix ()
+  "Sentinel-shaped paths returned by `dired-get-marked-files' are
+parsed back into container-side absolute paths."
+  ;; Simulate one mark by rendering, then calling our extractor.
+  (with-temp-buffer
+    (let ((entries (list (test-eltainer-dired--make-entry 'directory "etc")
+                         (test-eltainer-dired--make-entry 'file "hosts"))))
+      (eltainer-dired-mode)
+      (setq-local default-directory "/docker:test:/")
+      (setq-local eltainer-dired--sentinel-prefix "/docker:test:"
+                  eltainer-dired--remote-dir "/")
+      (eltainer-dired--render entries)
+      ;; Move past header + total to the first entry line.
+      (goto-char (point-min)) (forward-line 2)
+      (let ((paths (eltainer-dired--marked-remote-paths)))
+        (should (= 1 (length paths)))
+        (should (string-prefix-p "/" (car paths)))
+        ;; Container-absolute, not sentinel-prefixed.
+        (should-not (string-prefix-p "/docker:" (car paths)))))))
+
 (provide 'test-eltainer-dired)
 ;;; test-eltainer-dired.el ends here

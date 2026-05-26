@@ -63,6 +63,31 @@
       (should (string-match-p "directory" (cadr err))))))
 
 ;;; ---------------------------------------------------------------------------
+;;; Tar PUT builder (no daemon required)
+
+(ert-deftest docker-fs/tar-put-roundtrip ()
+  "A tar built by `docker-fs--make-tar' should be parseable by
+`docker-fs--untar-first-file' — the same byte format on both sides."
+  (let* ((content "imported from host\n")
+         (tar (docker-fs--make-tar "import.txt" content #o644)))
+    (should (equal content
+                   (docker-fs--untar-first-file tar "import.txt")))))
+
+(ert-deftest docker-fs/tar-put-checksum-valid ()
+  "USTAR checksum field must verify (header bytes summed, with the
+checksum field itself treated as 8 spaces).  Without it real `tar'
+implementations refuse the archive."
+  (let* ((tar (docker-fs--make-tar "x" "hello"))
+         (header (substring tar 0 512))
+         ;; Read the recorded checksum out of the header.
+         (recorded (string-to-number
+                    (replace-regexp-in-string
+                     "[\0 ]+\\'" ""
+                     (substring header 148 156))
+                    8)))
+    (should (= recorded (docker-fs--tar-checksum header)))))
+
+;;; ---------------------------------------------------------------------------
 ;;; Integration: hit a real container via the live daemon
 
 (defun test-docker-fs--running-container-name (cfg)

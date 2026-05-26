@@ -63,5 +63,33 @@ string); the caller is responsible for decoding."
       (k8s-fs--check r (format "cat %s" path))
       (k8s-exec-result-stdout r))))
 
+(defcustom k8s-fs-put-max-bytes (* 256 1024)
+  "Upload-size cap for `k8s-fs-put'.
+We encode bytes as base64 in the exec argv (no stdin streaming in
+the WebSocket sync exec path), which Linux ARG_MAX makes unsafe
+above a few hundred KB.  Below the cap is the common-case file
+edit; for larger uploads a streaming variant can come later."
+  :type 'integer
+  :group 'k8s)
+
+(defun k8s-fs-put (conn ns pod container dir name bytes)
+  "Upload BYTES into POD/CONTAINER at DIR/NAME via base64-through-argv.
+DIR is the absolute directory; NAME is the file's basename (no
+slashes).  Refuses files larger than `k8s-fs-put-max-bytes' — that
+cap exists because we don't (yet) stream stdin through the
+WebSocket exec; bytes ride along base64-encoded in the argv."
+  (when (string-match-p "/" name)
+    (error "k8s-fs-put: NAME must be a basename (got %S)" name))
+  (when (> (length bytes) k8s-fs-put-max-bytes)
+    (error "k8s-fs-put: %d-byte payload exceeds cap %d (argv-encoded)"
+           (length bytes) k8s-fs-put-max-bytes))
+  (let* ((path (concat (file-name-as-directory dir) name))
+         (b64 (base64-encode-string bytes 'no-line-break))
+         (script (concat "printf '%s' \"$1\" | base64 -d > \"$2\""))
+         (r (k8s-exec conn ns pod container
+                      (list "sh" "-c" script "_" b64 path))))
+    (k8s-fs--check r (format "put %s" path))
+    nil))
+
 (provide 'k8s-fs)
 ;;; k8s-fs.el ends here

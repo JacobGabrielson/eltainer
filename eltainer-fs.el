@@ -211,5 +211,21 @@ shell + GNU/BusyBox coreutils inside the container"))
                    status
                    "unknown error")))))))
 
+;;; ---------------------------------------------------------------------------
+;;; Probe for writable-op binaries (rm / mv / mkdir / cp)
+;;
+;; v2 needs all four binaries to exist; one `command -v' check up
+;; front gives us a clean "this container has no `rm' (distroless /
+;; scratch image)" error instead of four cryptic failures.
+
+(defconst eltainer-fs-write-binaries '("rm" "mv" "mkdir" "cp")
+  "Binaries required by the writable-op layer (`eltainer-dired-ops').")
+
+(defconst eltainer-fs-write-probe-script
+  "for b in rm mv mkdir cp; do command -v \"$b\" >/dev/null || \
+{ echo missing-$b; exit 1; }; done; echo ok"
+  "Sh script: prints `ok' if every writable-op binary is present,
+otherwise prints `missing-<binary>' on stderr.")
+
 (provide 'eltainer-fs)
 ;;; eltainer-fs.el ends here

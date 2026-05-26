@@ -56,15 +56,29 @@ Returns nil for single-container pods; otherwise prompts via
 (defun k8s-dired-browse (conn ns pod container &optional initial-dir)
   "Open a `k8s-dired-mode' buffer at INITIAL-DIR inside POD/CONTAINER.
 CONN is the k8s connection; CONTAINER may be nil for single-container
-pods.  INITIAL-DIR defaults to `/'."
+pods.  INITIAL-DIR defaults to `/'.
+
+Also wires the v2 writable ops: `exec-fn' / `check-fn' / `write-fn'
+route through `k8s-exec' and (for host -> container) base64
+through argv."
   (let* ((dir (or initial-dir "/"))
          (csuffix (if container (format "[%s]" container) ""))
          (label (format "k8s:%s/%s%s" ns pod csuffix))
          (prefix (format "/k8s:%s/%s%s:" ns pod csuffix))
-         (list-fn (lambda (path) (k8s-fs-list conn ns pod container path)))
-         (cat-fn  (lambda (path) (k8s-fs-cat  conn ns pod container path))))
-    (eltainer-dired-open label prefix dir list-fn cat-fn
-                         :mode #'k8s-dired-mode)))
+         (list-fn  (lambda (path) (k8s-fs-list conn ns pod container path)))
+         (cat-fn   (lambda (path) (k8s-fs-cat  conn ns pod container path)))
+         (exec-fn  (lambda (argv) (k8s-exec conn ns pod container argv)))
+         (check-fn #'k8s-fs--check)
+         (write-fn (lambda (remote-dir basename bytes)
+                     (k8s-fs-put conn ns pod container
+                                 remote-dir basename bytes)))
+         (buf (eltainer-dired-open label prefix dir list-fn cat-fn
+                                   :mode #'k8s-dired-mode)))
+    (with-current-buffer buf
+      (setq-local eltainer-dired--exec-fn  exec-fn
+                  eltainer-dired--check-fn check-fn
+                  eltainer-dired--write-fn write-fn))
+    buf))
 
 ;;;###autoload
 (defun k8s-dired-browse-at-point ()
