@@ -27,6 +27,72 @@ CMD is a list of strings; we encode it as a JSON array."
                          (Cmd . ,(apply #'vector cmd))))))
     (alist-get 'Id result)))
 
+(cl-defstruct (docker-exec-result
+               (:constructor docker-exec-result--new)
+               (:copier nil))
+  "Result of a synchronous `docker-exec-run'.
+Mirrors the shape of `k8s-exec-result' on the k8s side so the
+shared `eltainer-fs-check-failure' can accept either one's
+fields uniformly."
+  exit-code   ; integer or nil — ExitCode from `/exec/{id}/json'
+  stdout      ; unibyte string
+  stderr)     ; unibyte string
+
+(defcustom docker-exec-run-timeout 30
+  "Seconds `docker-exec-run' waits before giving up on a stream.
+Bumped past the K8s side's value because docker can be on the
+other side of a slow daemon over TCP+TLS."
+  :type 'integer
+  :group 'docker)
+
+;;;###autoload
+(defun docker-exec-run (cfg container argv &optional timeout)
+  "Run ARGV (list of strings) in CONTAINER via CFG, synchronously.
+Returns a `docker-exec-result' carrying captured stdout / stderr
+and the exit code from `GET /exec/{id}/json' after the stream
+closes.  TIMEOUT (default `docker-exec-run-timeout') in seconds.
+
+The docker counterpart of `k8s-exec' — the sync collector both
+halves of eltainer's filesystem-browse layer plug into.  Output
+is demultiplexed via `docker-stream-make-demux' (the same 8-byte
+framer the logs view uses); stdout and stderr land in separate
+byte buckets."
+  (let* ((exec-id (docker-exec--create cfg container argv nil))
+         (stdout-chunks nil)
+         (stderr-chunks nil)
+         (done nil)
+         (demux (docker-stream-make-demux
+                 (lambda (typ payload)
+                   (pcase typ
+                     ('stderr (push payload stderr-chunks))
+                     (_       (push payload stdout-chunks))))))
+         (proc (docker-exec--start-hijacked
+                cfg exec-id nil
+                (lambda (bytes) (funcall demux bytes))
+                (lambda ()
+                  (funcall demux 'cleanup)
+                  (setq done t))))
+         (deadline (+ (float-time) (or timeout docker-exec-run-timeout))))
+    (unwind-protect
+        (while (and (not done)
+                    (process-live-p proc)
+                    (< (float-time) deadline))
+          (accept-process-output proc 0.1))
+      (when (process-live-p proc)
+        (ignore-errors (delete-process proc))))
+    (unless done
+      (error "docker-exec-run: %s timed out after %ds"
+             (mapconcat #'identity argv " ")
+             (or timeout docker-exec-run-timeout)))
+    (let* ((info (ignore-errors
+                   (docker-engine-get
+                    cfg (format "/exec/%s/json" exec-id))))
+           (exit (and info (alist-get 'ExitCode info))))
+      (docker-exec-result--new
+       :exit-code exit
+       :stdout (apply #'concat (nreverse stdout-chunks))
+       :stderr (apply #'concat (nreverse stderr-chunks))))))
+
 (defun docker-exec--start-hijacked (cfg exec-id tty on-chunk on-close)
   "POST /exec/{id}/start, stream bytes back via ON-CHUNK.
 With TTY=t we negotiate a real hijack (Upgrade: tcp), so the same
