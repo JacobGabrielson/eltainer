@@ -136,6 +136,35 @@ mode) to cancel timers and close streams from the *old* code before
 the new code redefines anything, so timers don't get orphaned across
 a reload.
 
+### `defvar` vs `defconst` — the silent stale-data trap
+
+`defvar SYMBOL VALUE` only assigns when `SYMBOL` is unbound.
+Reloading a file that contains `(defvar foo '...new value...)` is a
+**no-op** if `foo` was already bound — Emacs silently keeps the old
+value.  This bit us: adding a row to `eltainer-views` (a `defvar`)
+made the new dashboard launcher invisible until Emacs restart, even
+after `eltainer-reload`.
+
+Rule of thumb:
+
+- **`defconst`** for any top-level data the user might edit and
+  expect to pick up on reload — dashboard rows, URL-template tables,
+  static lookup maps, default key-binding tables, the
+  `eltainer-{docker,k8s}-modules` lists, etc.  `defconst` always
+  reassigns on each evaluation.
+- **`defvar`** for genuine runtime state: caches, history lists,
+  mode-maps populated incrementally, hooks, user-mutable overrides
+  (`k8s-context-override` etc.), process / timer handles.
+
+Mode-maps (`*-mode-map`) are usually fine as `defvar` because the
+file populates them with `keymap-set` / `set-keymap-parent` *after*
+the defvar — those calls re-run on reload and mutate the existing
+map.  But never put bindings in the `defvar` initial-value form for
+the same reason: they won't get re-applied.
+
+If you find a bug where "I edited the file and reloaded and nothing
+changed," the first suspect is a stale `defvar`.
+
 ## Plan docs for non-trivial features
 
 For anything beyond a bug fix or a one-line tweak, get the design

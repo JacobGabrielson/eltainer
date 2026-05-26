@@ -206,7 +206,7 @@ decoded kubelet Summary alist for NODE, or nil on failure."
   "Perform a DELETE request to PATH on the K8s API via CONN."
   (k8s--http-json conn "DELETE" path))
 
-(defvar k8s--list-api-paths
+(defconst k8s--list-api-paths
   '((pods         "/api/v1/pods"
                   "/api/v1/namespaces/%s/pods")
     (deployments  "/apis/apps/v1/deployments"
@@ -266,7 +266,7 @@ the response."
                 base (url-hexify-string label-selector))
       base)))
 
-(defvar k8s--resource-api-paths
+(defconst k8s--resource-api-paths
   '((pod         . "/api/v1/namespaces/%s/pods/%s")
     (deployment  . "/apis/apps/v1/namespaces/%s/deployments/%s")
     (service     . "/api/v1/namespaces/%s/services/%s")

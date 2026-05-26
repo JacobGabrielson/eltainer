@@ -27,7 +27,7 @@
 ;;; ---------------------------------------------------------------------------
 ;;; Dashboard
 
-(defvar eltainer-views
+(defconst eltainer-views
   '(("Docker" .
      (("c" "Containers" docker-containers)
       ("I" "Images"     docker-images)
@@ -47,7 +47,11 @@
       ("o" "Nodes"         k8s-nodes)
       ("A" "Sandboxes"     k8s-sandboxes)
       ("H" "Helm releases" k8s-helm))))
-  "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).")
+  "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).
+`defconst' not `defvar' so editing this list and running
+`eltainer-reload' actually picks up the change — `defvar' is a
+no-op on an already-bound symbol, which silently makes new
+launchers invisible until Emacs is restarted.")
 
 (defvar eltainer-mode-map (make-sparse-keymap)
   "Keymap for `eltainer-mode'.
