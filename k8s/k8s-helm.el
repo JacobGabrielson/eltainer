@@ -59,7 +59,9 @@ Returns the release alist.  Signals if any layer doesn't decode."
 
 (defun k8s-helm--decode-secret (secret)
   "Return the decoded release alist for SECRET, or nil if not Helm.
-SECRET is the alist as returned by the K8s API list call."
+SECRET is the alist as returned by the K8s API list call.
+Attaches the source secret's `metadata' under the `secret-metadata'
+key so callers can render the release's age, owner labels, etc."
   (let* ((meta (cdr (assq 'metadata secret)))
          (labels (cdr (assq 'labels meta)))
          (data (cdr (assq 'data secret)))
@@ -67,7 +69,8 @@ SECRET is the alist as returned by the K8s API list call."
     (when (and release
                (equal "helm" (cdr (assq 'owner labels))))
       (condition-case err
-          (k8s-helm--decode-release release)
+          (cons (cons 'secret-metadata meta)
+                (k8s-helm--decode-release release))
         (error
          (message "k8s-helm: failed to decode %s/%s: %s"
                   (cdr (assq 'namespace meta))
@@ -88,23 +91,30 @@ SECRET is the alist as returned by the K8s API list call."
   "Label selector that returns one Secret per Helm release (the
 current revision, never the older superseded ones).")
 
+(defun k8s-helm--compose-selector (user-selector)
+  "Combine helm's baseline selector with USER-SELECTOR (or nil).
+Used when the user has set an `F l ...' filter on the helm view —
+both halves are AND'd via comma."
+  (if (and user-selector (not (string-empty-p user-selector)))
+      (concat k8s-helm--active-label-selector "," user-selector)
+    k8s-helm--active-label-selector))
+
 (defun k8s-helm-list-releases (conn &optional namespace)
   "Return the list of decoded release alists in NAMESPACE via CONN.
 NAMESPACE nil means cluster-wide.  Filters server-side via the
-helm-owner label so we don't drag every secret in the cluster."
-  (let* ((path (k8s--list-path 'secrets namespace
-                               k8s-helm--active-label-selector))
+helm-owner label so we don't drag every secret in the cluster.
+Composes any active `eltainer-filter' label-selector on top of the
+helm baseline."
+  (let* ((user-sel (and (bound-and-true-p eltainer-filter--state)
+                        (eltainer-filter-label-selector
+                         eltainer-filter--state)))
+         (path (k8s--list-path 'secrets namespace
+                               (k8s-helm--compose-selector user-sel)))
          (items (cdr (assq 'items (k8s-get conn path))))
          (out nil))
     (seq-doseq (s items)
       (let ((rel (k8s-helm--decode-secret s)))
-        (when rel
-          ;; Attach the source secret's metadata so the view can show
-          ;; the secret's creation-time as the release's age.
-          (push (cons (cons 'secret-metadata
-                            (cdr (assq 'metadata s)))
-                      rel)
-                out))))
+        (when rel (push rel out))))
     (nreverse out)))
 
 ;;; ---------------------------------------------------------------------------
@@ -158,6 +168,26 @@ helm-owner label so we don't drag every secret in the cluster."
           "NAME" "REV" "STATUS" "CHART" "APP" "AGE")
   "Column titles for the helm view.")
 
+(defun k8s-helm--manifest-summary (manifest)
+  "Return a list `((KIND . COUNT) ...)' from MANIFEST's YAML text.
+Counts `kind:' lines per document.  Doesn't pretend to be a real
+YAML parser — works because every Helm manifest emits `kind:' on
+its own line at indent 0 (or 2 in some chart conventions).  Empty
+MANIFEST returns nil."
+  (when (and manifest (not (string-empty-p manifest)))
+    (let ((counts (make-hash-table :test 'equal)))
+      (dolist (line (split-string manifest "\n"))
+        (when (string-match "^[ ]\\{0,2\\}kind:[ \t]+\\(\\sw+\\)" line)
+          (let ((k (match-string 1 line)))
+            (puthash k (1+ (gethash k counts 0)) counts))))
+      (let (out)
+        (maphash (lambda (k v) (push (cons k v) out)) counts)
+        ;; Sort by count desc, then alpha.
+        (sort out (lambda (a b)
+                    (if (= (cdr a) (cdr b))
+                        (string< (car a) (car b))
+                      (> (cdr a) (cdr b)))))))))
+
 (defun k8s-helm--insert-line (rel)
   "Insert one row for RELEASE."
   (let* ((name    (k8s-helm--rel-name rel))
@@ -178,7 +208,15 @@ helm-owner label so we don't drag every secret in the cluster."
                 (propertize chart 'font-lock-face 'k8s-dim)
                 (propertize app 'font-lock-face 'k8s-dim)
                 age))
-      ;; Detail: NOTES.txt if any.
+      ;; Detail: manifest resource tally + NOTES.txt.
+      (let ((tally (k8s-helm--manifest-summary (k8s-helm--rel-manifest rel))))
+        (when tally
+          (insert (propertize "    RESOURCES:\n"
+                              'font-lock-face 'k8s-section-heading))
+          (dolist (entry tally)
+            (insert (propertize
+                     (format "      %3d  %s\n" (cdr entry) (car entry))
+                     'font-lock-face 'k8s-dim)))))
       (let ((notes (k8s-helm--rel-notes rel)))
         (when (and notes (not (string-empty-p notes)))
           (insert (propertize "    NOTES:\n" 'font-lock-face 'k8s-section-heading))
@@ -188,11 +226,25 @@ helm-owner label so we don't drag every secret in the cluster."
       (insert "\n"))))
 
 (defun k8s--helm-refresh ()
-  "Refresh the helm releases buffer."
+  "Refresh the helm releases buffer.
+Honours the active `eltainer-filter': the label half composes with
+helm's `owner=helm,status!=superseded' baseline (via
+`k8s-helm--compose-selector') and rides the API call; the name-
+regex half is applied here client-side after fetch."
   (let* ((inhibit-read-only t)
          (ctx (k8s--save-point-context))
          (conn (k8s--ensure-connection))
+         (filter eltainer-filter--state)
          (releases (k8s-helm-list-releases conn k8s--namespace))
+         (releases (if (and filter
+                            (let ((nr (eltainer-filter-name-regex filter)))
+                              (and nr (not (string-empty-p nr)))))
+                       (seq-filter
+                        (lambda (rel)
+                          (eltainer-filter-match-name-p
+                           filter (k8s-helm--rel-name rel)))
+                        releases)
+                     releases))
          ;; group by namespace for visual parity with other views
          (grouped (k8s--group-by-namespace
                    (apply #'vector
@@ -240,7 +292,11 @@ helm-owner label so we don't drag every secret in the cluster."
     (oref sec value)))
 
 (defun k8s-helm-view-values ()
-  "Pop a read-only buffer showing the current release's values.yaml."
+  "Pop a read-only buffer showing the current release's values.yaml.
+The values are stored as parsed JSON on the wire — we pretty-print
+them as indented JSON in the popup, which is faithful to the
+release's actual saved state and a lot more readable than the raw
+single-line blob."
   (interactive)
   (let* ((rel (k8s-helm--release-at-point))
          (values (k8s-helm--rel-values rel))
@@ -249,11 +305,64 @@ helm-owner label so we don't drag every secret in the cluster."
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (insert (with-temp-buffer
-                  (eltainer-ui-describe-value (or values "{}") 0)
-                  (buffer-string)))
+        (if (null values)
+            (insert "(no values set — chart defaults in effect)\n")
+          (insert (json-encode values))
+          (goto-char (point-min))
+          (json-pretty-print-buffer))
         (goto-char (point-min))
-        (special-mode)))
+        (special-mode)
+        (when (fboundp 'json-mode) (json-mode))))
+    (pop-to-buffer buf)))
+
+(defun k8s-helm-view-history ()
+  "Show every revision of the release at point, newest first.
+Hits the API for *all* revisions (drops the `status!=superseded'
+constraint that the main view uses), decodes each, and renders one
+row per revision in a popup."
+  (interactive)
+  (let* ((rel (k8s-helm--release-at-point))
+         (name (k8s-helm--rel-name rel))
+         (ns (k8s-helm--rel-namespace rel))
+         (conn (k8s--ensure-connection))
+         (path (k8s--list-path
+                'secrets ns (format "owner=helm,name=%s" name)))
+         (items (cdr (assq 'items (k8s-get conn path))))
+         (revs (sort (delq nil
+                           (mapcar #'k8s-helm--decode-secret
+                                   (append items nil)))
+                     (lambda (a b)
+                       (> (or (k8s-helm--rel-version a) 0)
+                          (or (k8s-helm--rel-version b) 0)))))
+         (buf (get-buffer-create (format "*k8s:helm:%s:history*" name))))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (special-mode)
+        (insert (propertize
+                 (format "Release: %s/%s — %d revision%s\n\n"
+                         ns name (length revs)
+                         (if (= 1 (length revs)) "" "s"))
+                 'font-lock-face 'k8s-section-heading))
+        (insert (propertize
+                 (format "  %-3s %-12s %-25s %s\n"
+                         "REV" "STATUS" "CHART" "AGE")
+                 'font-lock-face 'k8s-section-heading))
+        (dolist (r revs)
+          (let ((status (or (k8s-helm--rel-status r) "?")))
+            (insert (format "  %-3s %s %-25s %s\n"
+                            (format "%s" (or (k8s-helm--rel-version r) "?"))
+                            (propertize (format "%-12s" status)
+                                        'font-lock-face
+                                        (k8s-helm--status-face status))
+                            (propertize
+                             (format "%s-%s"
+                                     (or (k8s-helm--rel-chart-name r) "?")
+                                     (or (k8s-helm--rel-chart-version r) "?"))
+                             'font-lock-face 'k8s-dim)
+                            (k8s--age-string
+                             (k8s-helm--rel-secret-creation r))))))
+        (goto-char (point-min))))
     (pop-to-buffer buf)))
 
 (defun k8s-helm-view-manifest ()
@@ -279,7 +388,8 @@ helm-owner label so we don't drag every secret in the cluster."
   "Keymap for `k8s-helm-mode'.")
 (set-keymap-parent k8s-helm-mode-map k8s-common-map)
 (pcase-dolist (`(,k ,cmd) '(("v" k8s-helm-view-values)
-                             ("m" k8s-helm-view-manifest)))
+                             ("m" k8s-helm-view-manifest)
+                             ("h" k8s-helm-view-history)))
   (keymap-set k8s-helm-mode-map k cmd))
 
 (define-derived-mode k8s-helm-mode magit-section-mode "K8s:Helm"

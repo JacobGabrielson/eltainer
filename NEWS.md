@@ -1,38 +1,47 @@
 # NEWS — eltainer
 
-User-visible changes to eltainer, **reverse-chronological** (newest
-first).  Entries land here when a feature ships, not when it's
-planned — see `docs/*-plan.md` for design docs and
-`docs/new-features.md` for the in-flight backlog.
+User-visible changes, **reverse-chronological** by date.  Each
+heading is a day; under it sit the features that landed that day.
+Entries are written from the user's point of view — what's now
+possible, which key does what.  Implementation detail belongs in
+commit messages.
 
-Entries are written from the user's perspective: what's now possible
-that wasn't, which key does what, what surface the user looks at.
-Implementation detail belongs in commit messages, not here.
+See `docs/*-plan.md` for design docs and `docs/new-features.md` for
+the in-flight backlog.
 
 ---
 
-## Unreleased
+## 2026-05-26
 
 ### Helm 3 releases view
 
 `H` on the dashboard (or `?` → *Helm releases* from any k8s view)
-opens a read-only listing of every Helm 3 release in the cluster.
+opens a read-only listing of Helm 3 releases in the cluster.
 Columns: NAME / REVISION / STATUS / CHART / APP / AGE; STATUS is
 colour-coded (deployed = green, failed = red, other = yellow).
-`RET` on a row expands it to show the chart's `NOTES.txt`.  `v` pops
-the release's `values.yaml`; `m` pops the rendered manifest.
 
-Decoded directly from the release Secrets the API server already
-exposes (`owner=helm,status!=superseded` label selector) — no `helm`
-CLI is invoked.
+Per-row actions:
+- `RET` / `TAB` — expand the row.  Shows a per-kind tally of the
+  rendered manifest (`3 Service / 5 ConfigMap / 1 Deployment …`)
+  and the chart's `NOTES.txt`.
+- `v` — pop a buffer with the release's `values.yaml` (pretty-
+  printed JSON, falls into `json-mode` when available).
+- `m` — pop a buffer with the rendered manifest.
+- `h` — pop the full revision history (every revision of this
+  release, newest first; the main view shows only the active one).
+- `F` — narrow composes with helm's `owner=helm` baseline.
+
+Decoded directly from the API-server release Secrets — no `helm`
+CLI invoked.
 
 ### Filter / narrow views by label (`F` prefix)
 
-Every k8s view and the docker containers view now narrow on the fly.
-`F l SELECTOR` applies a K8s-style label selector
+Every k8s view and the docker containers view now narrow on the
+fly.  `F l SELECTOR` applies a K8s-style label selector
 (`tier=frontend,env!=dev`).  `F n REGEX` narrows by name regex.
 `F c` clears.  Filters are per-buffer and survive `g`.  The
-mode-line shows `[label:… name:…]` in the warning face when active.
+mode-line shows `[label:… name:…]` in the warning face when
+active.
 
 Labels go server-side (K8s `?labelSelector=`, docker `?filters=`
 JSON).  Name-regex is client-side.  Docker's filter is
@@ -43,47 +52,45 @@ with a one-line warning.
 
 On the pods view (or docker containers view), `D` prompts for a
 hostname and resolves it *from inside that container*.  Tries
-`getent hosts` → `nslookup` → falls back to dumping `/etc/resolv.conf`
-+ `/etc/hosts` (first probe that exits 0 wins).  Result pops a
-read-only buffer.  Distroless images get a clear "no shell, no
-getent, no nslookup" diagnostic.
+`getent hosts` → `nslookup` → falls back to dumping
+`/etc/resolv.conf` + `/etc/hosts` (first probe that exits 0 wins).
+Result pops a read-only buffer.  Distroless images get a clear
+"no shell, no getent, no nslookup" diagnostic.
 
 ### Ingress backend `RET` jumps to the Service
 
 When an Ingress section is expanded, each `host/path → service:port`
 row is now actionable — `RET` jumps to that Service in the services
-view.  This is the first arm of a general `k8s-jump-target` text
-property mechanism that future cross-resource jumps will reuse (Pod
-→ Node, Service → Endpoints, etc.).
+view.  Foundation for a general `k8s-jump-target` text-property
+mechanism that future cross-resource jumps will reuse (Pod → Node,
+Service → Endpoints, etc.).
 
 ### Age column colour tiers
 
-The AGE column in every resource view used to render in a single
-dim face — old and brand-new resources looked the same.  Now each
-age tier gets its own face:
+The AGE column in every resource view now colour-codes by tier:
 
-| Age      | Face                       | Default colour |
-|----------|----------------------------|----------------|
-| < 1 hour | `eltainer-age-very-new`    | warning (yellow / orange) |
-| < 1 day  | `eltainer-age-new`         | success (green) |
-| < 1 week | `eltainer-age-medium`      | default foreground |
-| < 30 days| `eltainer-age-old`         | shadow |
-| ≥ 30 days| `eltainer-age-ancient`     | shadow + light weight |
+| Age      | Face                    | Default colour |
+|----------|-------------------------|----------------|
+| < 1 hour | `eltainer-age-very-new` | warning        |
+| < 1 day  | `eltainer-age-new`      | success        |
+| < 1 week | `eltainer-age-medium`   | default fg     |
+| < 30 days| `eltainer-age-old`      | shadow         |
+| ≥ 30 days| `eltainer-age-ancient`  | shadow + light |
 
-Faces are themable via `M-x customize-face`.
+Themable via `M-x customize-face`.
 
 ### Log views: `p` is `previous-line` again
 
-In the multipod log buffer (`k8s-multilog-mode`), `p` used to toggle
-pause/resume — but every other view uses `n`/`p` for line
-navigation, so muscle memory tripped.  Pause has moved to capital
-`P`.  All log buffers (single-pod, multipod, docker) now enable
-`hl-line-mode` so the cursor line is visibly highlighted.
+In `k8s-multilog-mode`, `p` used to toggle pause/resume — but
+every other view uses `n`/`p` for line navigation, so muscle
+memory tripped.  Pause has moved to capital `P`.  All log buffers
+(single-pod, multipod, docker) now enable `hl-line-mode` so the
+cursor line is visibly highlighted.
 
 ### Writable filesystem browser (container-dired v2)
 
 The dired-mode buffer over a container's filesystem (`f` on a pod
-or container) is now writable.  The standard dired keys all route
+or container) is now writable.  The standard dired keys route
 through the container's exec backend, after a yes-or-no confirm:
 
 | Key | Action |
@@ -93,11 +100,10 @@ through the container's exec backend, after a yes-or-no confirm:
 | `C` | Copy in-container (`cp -r`) or export to host (`host:` prefix) |
 | `+` | Create directory (`mkdir -p`) |
 | `I` | Import a host file *into* this directory |
-| `C-x C-q` | wdired — edit names in the buffer, `C-c C-c` commits the batch as `mv` execs |
+| `C-x C-q` | wdired — edit names in the buffer, `C-c C-c` commits the batch |
 
-Host → container import uses Docker's archive PUT API (works on
-distroless / scratch) on the docker side, base64-through-argv on
-the k8s side (256 KB cap; the WebSocket sync exec has no stdin).
+Host → container import uses Docker's archive PUT API on the
+docker side, base64-through-argv on the k8s side (256 KB cap).
 The first writable op probes for `rm` / `mv` / `mkdir` / `cp` and
 caches the result on the buffer — distroless surfaces a single
 friendly error instead of one per operation.
@@ -106,119 +112,159 @@ friendly error instead of one per operation.
 
 `f` on a pod or container row opens a real `dired-mode` buffer over
 the container's filesystem.  Inherits every navigation / marking
-keystroke from muscle memory: `n`/`p`, `RET`, `^`, `m`/`u`/`U`/`t`,
-sort, hide-by-pattern, all of it.  Sentinel paths are
-`/docker:NAME:/path` and `/k8s:NS/POD[CONTAINER]:/path`, *not*
-TRAMP — eltainer never shells out.
+keystroke from muscle memory.  Sentinel paths are
+`/docker:NAME:/path` and `/k8s:NS/POD[CONTAINER]:/path` — *not*
+TRAMP; eltainer never shells out.  Reads go through the engine
+API directly, so distroless can still be catted (docker side) and
+gives a clean error message instead of OCI noise (k8s side).
 
-Reads tunnelled through the engine API (docker archive endpoint
-on docker, exec on k8s) so distroless containers can still be
-*catted* (docker side) and yield a clear error message instead of
-a wall of OCI noise (k8s side, where listing needs a shell).
+### `make test` / `make test-all`
+
+`make test` runs the pure-Elisp unit suite (parsers, path
+arithmetic, regression tests) with no daemon or cluster needed.
+`make test-all` adds the live-daemon and live-cluster integration
+suites — they `skip-unless` cleanly when nothing's reachable.
+`make compile` does a clean byte-compile sanity check.
 
 ---
 
-## Earlier work
+## 2026-05-25
 
-### Multi-pod log tailing (stern-style)
+### Friendlier error on distroless / scratch containers
+
+When `f` (or any other exec-dependent action) hit a distroless or
+scratch image, the user used to see several lines of raw OCI
+runtime noise.  Now they get a single line:
+
+```
+eltainer-fs: container has no `sh' / `find' / `stat'
+(distroless or scratch image) — filesystem browse needs a POSIX
+shell + GNU/BusyBox coreutils inside the container
+```
+
+---
+
+## 2026-05-24
+
+### Dired-style marks across every view
+
+`m` / `u` / `U` / `t` / `DEL` (plus `M-DEL`, `* !`, `* ?`) mark /
+unmark resources in any k8s view.  Marks then feed multi-target
+commands.
+
+### Multi-pod log tailing (stern-style, `L`)
 
 `L` on the pods view streams every marked pod's logs into one
 buffer, each pod a distinct colour.  Or `l` on a controller
 (Deployment / StatefulSet / DaemonSet / Job / Service / CronJob)
 tails every pod the controller owns automatically.  Point at tail
-on open / restart / clear; pause with `P`.
-
-### Dired-style marks across every view
-
-`m` / `u` / `U` / `t` / `DEL` (and the full set: `M-DEL`, `* !`,
-`* ?`) mark / unmark resources in any k8s view.  Marks then feed
-multi-target commands (`L` for multipod logs, `d` for batch
-delete, etc.).
+on open / restart / clear.
 
 ### ANSI colour rendering in log buffers
 
-Pod / container log streams used to display `^[[` escape junk;
-they now render colours and basic SGR styles inline.
+Pod / container log streams used to leak `^[[` escape sequences
+into the buffer.  They now render colour and basic SGR styles
+inline.
 
-### Interactive TTY exec into pods + containers
+### Stable cursor across refreshes; CronJob last-run logs
 
-`e` on a pod or container row opens a real terminal inside it,
-backed by `eat`.  The remote PTY tracks the Emacs window size.
-Defaults to a shell probe (`/bin/sh` → `bash` → `busybox sh`),
-with a clear error on distroless.
+`g` (refresh) keeps the cursor on the same resource even when the
+list above shifts.  `l` on a CronJob row tails the last run's
+pod's logs.
 
-### Container-aware launchers
+---
 
-When point is on an expanded *container* sub-section of a pod (vs.
-the pod itself), `l` / `e` / `f` / `M` target that container
-directly — no picker prompt.  On the pod line, multi-container
-pods get a picker.
+## 2026-05-23
 
-### Per-resource metrics buffers
+### `M-x eltainer-stop-all` panic button
 
-`M` on a pod opens a metrics dashboard for it (CPU / memory / I/O
-/ net per container, sparklines).  Same on a docker container.
-Cluster-level: a Nodes view with per-node usage gauges, optionally
-enriched by Prometheus load averages and range queries.
+A single command that closes every eltainer view, cancels every
+metrics timer, and tears down every open watch stream.  Useful
+when a slow cluster has made Emacs feel unresponsive.
 
-### Inline metrics gauges in resource views
+Default metrics polling interval also relaxed (from 5 s to 30 s).
 
-CPU / memory bars render under each pod section in the pods view,
-fed by `metrics.k8s.io`.  Disk I/O and network rates fold in from
-the kubelet Summary API.  Trend sparklines show the recent
-history.  Metrics polling is on its own timer (default 30 s),
-never blocks the view's hot path.
+---
 
-### Kubeconfig context switcher (`b`)
+## 2026-05-22
 
-`b` from the dashboard or any k8s view pops a picker listing every
-context discovered in `$KUBECONFIG`, `~/.kube/config`,
-`~/.kube/configs/`, and `eltainer-kubeconfig-extra-paths`.  RET
-switches.
+### Kubernetes Nodes view, optionally Prometheus-enriched
 
-### Watch-API live updates (`w`)
+`o` from the dashboard / `?` resource switcher opens a cluster
+nodes view: per-node CPU and memory usage gauges off
+`metrics.k8s.io`, plus disk usage from the kubelet Summary API.
+If a Prometheus Service is present in the cluster, node 1m / 5m /
+15m load averages and range queries fold in too.
 
-`w` in any k8s view turns on live updates: pod transitions, new
-pods, deletions etc. flow in from the watch stream and the buffer
-re-renders incrementally.  The mode-line shows `[W]` (active) /
-`[W!]` (stalled).
+### Kubernetes Sandboxes view (agent-sandbox SIG)
 
-### Resource views
+`A` opens a view of `agents.x-k8s.io/v1alpha1` `Sandbox` resources
+when the CRD is installed.  Degrades gracefully (no rows, no
+error) when it isn't.
 
-`d` Deployments / `s` Services / `S` StatefulSets / `D` DaemonSets
-/ `j` Jobs / `J` CronJobs / `i` Ingresses / `m` ConfigMaps / `x`
-Secrets / `o` Nodes / `A` Sandboxes (agent-sandbox SIG) / `H` Helm
-releases — all reachable from the dashboard, or from each other
-via the `?` resource-switcher transient.
+### Container metrics dashboard (docker side)
 
-### Dashboard (`M-x eltainer`)
+`M` on a docker container row opens a per-container metrics buffer
+with CPU, memory, disk I/O, network, and PIDs gauges — sampled
+from the engine's `/stats` endpoint.  Fetched asynchronously so
+slow daemons don't hang Emacs.  Memory gauges against host RAM for
+containers with no explicit limit.
 
-A unified home screen listing every Docker and Kubernetes view
-plus the active kubeconfig context.  `RET` on a row launches the
-view; the dashboard refreshes its kubeconfig section automatically
-on context switch.
+### Kubernetes metrics (phase 1 / 1.5 / 2)
 
-### Direct docker engine API
+Inline CPU and memory gauges render directly under each pod
+section in the pods view, fed by `metrics.k8s.io`.  `M` on a pod
+opens a per-pod metrics dashboard.  Disk usage gauges and network
+sparklines from the kubelet Summary API.  Trend sparklines show
+the recent history.  `?` dispatch grew an entry for the per-pod
+metrics buffer.
 
-eltainer no longer shells out to the `docker` CLI.  Every action
-(`ps`, `logs`, `exec`, `events`, image pulls, metrics, archive
-copy) talks straight to the engine's UNIX socket / TLS endpoint
-via plain HTTP.  Auth (TLS certs, `docker-credential-*` helpers)
-is read from `~/.docker/config.json`.
+---
 
-### Pre-history
+## 2026-05-21
 
-Things from before NEWS started being kept — see `git log` for
-the full record.  The big arcs were:
+### Container-aware `l` / `e` / `f`
 
-- **`eltainer` rename + repo unification** (Phase A–G) — folded
-  the separate Docker and Kubernetes pure-Elisp clients into one
-  tree, sharing HTTP, terminal, UI primitives.
-- **Performance plan** — four tiers of measured speedups
-  (parallelism, HTTP keep-alive pool, kubeconfig memoisation,
-  stream-filter buffering, incremental tracking).  See
-  `docs/perf-plan.md`.
-- **Test fixtures plan** (proposal, see
-  `docs/test-fixtures-plan.md`) — capture / replay HTTP layer for
-  deterministic offline tests.  Not landed yet; current tests are
-  pure-Elisp unit + live integration (`make test` / `make test-all`).
+When point is on an expanded *container* sub-section of a pod
+(vs. the pod row itself), `l` / `e` / `f` / `M` target that
+container directly — no picker prompt.  On the pod line,
+multi-container pods get a picker.
+
+### Buffer-based container picker (no completion framework needed)
+
+The multi-container picker for `e` / `l` is now its own
+self-contained buffer with `n` / `p` / `RET` / `q` — works
+identically regardless of whether the user has vertico / fido /
+plain minibuffer completion configured.
+
+### `k8s exec` always prompts for the command
+
+`e` on a pod / container now always pops a prompt pre-filled with
+`/bin/sh`.  Accept the default to trigger a shell probe; type
+anything else (`bash`, `ash -x`, `python3 -c …`) to run that
+instead.
+
+---
+
+## 2026-05-20
+
+### Multi-container exec / logs picker
+
+When `e` or `l` is invoked on a multi-container pod, eltainer
+prompts for the container instead of silently picking the first.
+
+---
+
+## 2026-05-19
+
+### Shell probe + readable failures for `k8s exec`
+
+`e` defaults to `/bin/sh`, but if that doesn't exist eltainer
+probes `bash`, `busybox sh`, `ash` and the first one that works.
+Distroless images get a clear error message pointing at
+`kubectl debug --image=busybox` instead of the bare engine error.
+
+### Streaming pod logs
+
+Pod logs stream in live (`l`) instead of being one-shot fetched.
+`g` restarts the stream; `k` stops it.

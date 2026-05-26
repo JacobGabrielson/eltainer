@@ -141,5 +141,64 @@ message — don't tear the whole listing down."
     (should (consp (k8s-helm--rel-values rel)))
     (should (stringp (k8s-helm--rel-manifest rel)))))
 
+;;; --- New helpers (compose-selector + manifest-summary) ---------------------
+
+(ert-deftest helm/compose-selector-no-user-filter ()
+  "Without a user-set label filter, the helm baseline rides alone."
+  (should (equal k8s-helm--active-label-selector
+                 (k8s-helm--compose-selector nil)))
+  (should (equal k8s-helm--active-label-selector
+                 (k8s-helm--compose-selector ""))))
+
+(ert-deftest helm/compose-selector-with-user-filter ()
+  "User filter AND'd onto the baseline via comma."
+  (should (equal "owner=helm,status!=superseded,tier=frontend"
+                 (k8s-helm--compose-selector "tier=frontend"))))
+
+(ert-deftest helm/manifest-summary-counts-kinds ()
+  "Each `kind:' line bumps its kind's count.  Result is sorted
+count-desc then alpha."
+  (let* ((manifest "---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+")
+         (summary (k8s-helm--manifest-summary manifest)))
+    (should (equal '(("Service" . 2)
+                     ("ConfigMap" . 1)
+                     ("Deployment" . 1))
+                   summary))))
+
+(ert-deftest helm/manifest-summary-empty ()
+  (should-not (k8s-helm--manifest-summary nil))
+  (should-not (k8s-helm--manifest-summary "")))
+
+(ert-deftest helm/decode-secret-attaches-secret-metadata ()
+  "Decoded release carries the source secret's metadata so the
+view can render age etc."
+  (let* ((secret (test-helm--secret-fixture test-helm--sample-release))
+         (rel    (k8s-helm--decode-secret secret))
+         (smeta  (cdr (assq 'secret-metadata rel))))
+    (should smeta)
+    (should (equal "default" (cdr (assq 'namespace smeta))))
+    (should (equal "2026-05-25T10:00:00Z"
+                   (cdr (assq 'creationTimestamp smeta))))))
+
 (provide 'test-helm)
 ;;; test-helm.el ends here

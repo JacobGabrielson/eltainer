@@ -180,16 +180,22 @@ need a README update.
 ## NEWS.md hygiene
 
 `NEWS.md` is a reverse-chronological, user-facing log — Emacs-style.
-The first section is always `## Unreleased`; new entries get
-**prepended** *inside* that section as `### Short feature name`
-followed by a short user-perspective description (a few sentences,
-optionally a table of new keys).
+It is grouped by **date** (`## YYYY-MM-DD`), newest day first.
+Under each day sit the features that landed that day as
+`### Short feature name`, followed by a short user-perspective
+description (a few sentences, optionally a table of new keys).
 
 When a feature ships that's visible to the end user — a new key, a
 new view, a new behaviour, a UX change they'd notice — add an
-entry to `NEWS.md` in the same commit.  The trigger is the same
-list as README hygiene above (key-binding tables, dependencies,
-arch list, demo references).
+entry to `NEWS.md` in the same commit:
+
+1. If a `## <today's date>` heading already exists at the top of
+   the file, prepend the new `### entry` under it.
+2. Otherwise, prepend a fresh `## <today's date>` block at the top
+   (above any existing day) and put the entry there.
+
+The trigger is the same list as README hygiene above (key tables,
+new dependency, new module, demo references).
 
 Do *not* add an entry for:
 - Pure-internal refactors that don't change behaviour.
@@ -201,10 +207,6 @@ Do *not* add an entry for:
 Write from the user's point of view (*"`F` now narrows by label"*),
 not the implementation's (*"added eltainer-filter.el"*).  Commit
 messages are where the how lives; `NEWS.md` is the what.
-
-When tagging a release: rename the `## Unreleased` heading to
-`## <version> — <date>` and prepend a fresh empty `## Unreleased`
-above it.
 
 ## Testing
 
