@@ -15,35 +15,25 @@ Convention:
 
 ---
 
-## Ingress: `RET` on a backend line jumps to the Service / Pods  *(status: drafted)*
+## Cross-resource jumps — extending `k8s-jump-target`  *(status: shipped Ingress -> Service; more to come)*
 
-Under each Ingress (k8s.el §Ingresses, `k8s--insert-ingress-line`)
-we render lines like `bookstore.local/api → bookstore-api:80`.  `RET`
-there does nothing today; it should jump to the Service (or, if no
-Services view is open, the Pods filtered to that Service's
-selector).
+The `k8s-jump-target` text property is the mechanism for every
+cross-resource RET.  `k8s-dwim-ret` reads the property under point
+and dispatches via `k8s--jump-to-target`'s `pcase` arms.
 
-Plan:
-- In `k8s--insert-ingress-line` (`k8s/k8s.el:1339`), put a
-  `(k8s-jump-target (service NAMESPACE NAME))` text property on
-  each backend line.  Use the ingress's own namespace (rules don't
-  carry one).
-- Add `k8s-dwim-ret` that reads the property and dispatches: open
-  the services view, search for `NAME` in `NAMESPACE`, position
-  point there.  Fall back: if Services view's macro doesn't make
-  jumping easy, open a pods-view filtered by the Service's
-  `selector` (which means another API call to `GET /services/NAME`
-  first).
-- Bind in `k8s-ingresses-mode-map` (and any other view that grows
-  jump-targets) — keep `RET` as DWIM via the existing
-  `k8s--define-view` macro.
-- Tests: fixture-based once test-fixtures-plan lands; for now a
-  smoke test with `(k8s-ingresses)` against a live cluster.
+Today: `(service NS NAME)` works (Ingress backend rows → Services
+view, scrolls to that row).
 
-Generalisation note: the same `k8s-jump-target` property is the
-mechanism for **all** future cross-resource jumps (Deployment →
-Pods, Pod → Node, Service → Endpoints, etc.).  Designing the
-property now pays off later.
+Future arms to add when needed:
+- `(pod NS NAME)` from places that mention a pod (Job → its pod;
+  Endpoint → backing pod).
+- `(node NAME)` from a pod's `Node:` field (already on the inspect
+  buffer; add a property there).
+- `(deployment NS NAME)` from a Service's owner annotation (when we
+  add owner-reference rendering).
+- `(endpoints NS NAME)` from a Service row.
+
+Each new arm is ~5 lines plus the property at the render site.
 
 ---
 

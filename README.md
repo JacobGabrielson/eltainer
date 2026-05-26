@@ -113,6 +113,7 @@ metrics buffer for the container.
 | `M` | Per-pod metrics buffer (pods view only) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
+| `RET` on an Ingress backend row | Jump to the referenced Service in the services view |
 
 `?` is **context-aware** — the first group of the menu reflects
 whatever the cursor is on (a pod, a container, or another resource),

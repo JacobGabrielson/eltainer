@@ -609,16 +609,42 @@ k8s-themed heading face."
 (autoload 'eltainer-switch-kubeconfig "eltainer" nil t)
 
 (defun k8s-dwim-ret ()
-  "Smart RET: if on a header field, activate it; otherwise toggle section."
+  "Smart RET: header-field activate / jump-target follow / section toggle.
+Picks the action from the text property under point:
+  `k8s-field'        — header line activator (resource / namespace).
+  `k8s-jump-target'  — cross-resource jump (Ingress -> Service, etc.).
+  otherwise          — magit-section toggle."
   (interactive)
-  (let ((field (get-text-property (point) 'k8s-field)))
+  (let ((field  (get-text-property (point) 'k8s-field))
+        (target (get-text-property (point) 'k8s-jump-target)))
     (cond
-     ((eq field 'resource)
-      (call-interactively #'k8s-switch-resource))
-     ((eq field 'namespace)
-      (call-interactively #'k8s-set-namespace))
-     (t
-      (call-interactively #'magit-section-toggle)))))
+     ((eq field 'resource)   (call-interactively #'k8s-switch-resource))
+     ((eq field 'namespace)  (call-interactively #'k8s-set-namespace))
+     (target                 (k8s--jump-to-target target))
+     (t                      (call-interactively #'magit-section-toggle)))))
+
+(defun k8s--jump-to-target (target)
+  "Follow the `k8s-jump-target' property TARGET.
+TARGET is a list whose CAR is the kind and CDR carries the
+identifying details:
+  (service NS NAME) — open the services view and put point on
+                       NAME within NS.
+Future kinds (pod / node / endpoints / configmap / …) add their
+own arms here."
+  (pcase target
+    (`(service ,ns ,name)
+     (k8s-services)
+     (with-current-buffer (get-buffer "*k8s:services*")
+       (when (and ns (not (equal ns k8s--namespace)))
+         (setq-local k8s--namespace ns)
+         (k8s--services-refresh))
+       (goto-char (point-min))
+       (if (re-search-forward
+            (format "^  %s[[:space:]]" (regexp-quote name)) nil t)
+           (beginning-of-line)
+         (message "k8s: %s/%s not found in services view" ns name))))
+    (_
+     (message "k8s-jump-target: don't know how to follow %S" target))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Watch integration
@@ -1297,8 +1323,13 @@ daemonsets, jobs and services."
 ;;; Ingresses
 
 (defun k8s--insert-ingress-line (ing)
-  "Insert an ingress summary line."
+  "Insert an ingress summary line.
+Each rendered backend line carries a `k8s-jump-target' text property
+\(value `(service NS NAME)') so `k8s-dwim-ret' can jump to it.
+Ingress rules don't carry their own namespace — Ingress -> Service
+references are always same-namespace, so we use the ingress's ns."
   (let* ((name (k8s--resource-name ing))
+         (ns   (k8s--resource-namespace ing))
          (spec (cdr (assq 'spec ing)))
          (status (cdr (assq 'status ing)))
          (rules (cdr (assq 'rules spec)))
@@ -1338,7 +1369,10 @@ daemonsets, jobs and services."
                        (port-num (or (cdr (assq 'number port-obj)) "?")))
                   (insert (propertize
                            (format "    %s%s → %s:%s\n" host p svc-name port-num)
-                           'font-lock-face 'k8s-dim))))))))
+                           'font-lock-face 'k8s-dim
+                           'k8s-jump-target (list 'service ns svc-name)
+                           'help-echo (format "RET: jump to service %s/%s"
+                                              ns svc-name)))))))))
       (k8s--insert-labels (k8s--resource-labels ing) "    ")
       (insert "\n"))))
 
