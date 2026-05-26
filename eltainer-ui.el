@@ -62,6 +62,36 @@
   "Generic dim/secondary text."
   :group 'eltainer)
 
+;; Age-tier faces.  The boundaries (1h / 1d / 1w / 30d) map to the
+;; five faces below.  Very fresh resources draw attention because
+;; "just started" often means "still stabilising" or "just deployed";
+;; old ones dim out because they're the boring background.
+
+(defface eltainer-age-very-new
+  '((t :inherit warning))
+  "Age < 1 hour.  Default: yellow / orange — \"just appeared\"."
+  :group 'eltainer)
+
+(defface eltainer-age-new
+  '((t :inherit success))
+  "Age < 1 day.  Default: green — recent but settled."
+  :group 'eltainer)
+
+(defface eltainer-age-medium
+  '((t :inherit default))
+  "Age 1 day to 1 week.  Default: foreground colour."
+  :group 'eltainer)
+
+(defface eltainer-age-old
+  '((t :inherit shadow))
+  "Age 1 week to 30 days.  Default: dim."
+  :group 'eltainer)
+
+(defface eltainer-age-ancient
+  '((t :inherit shadow :weight light))
+  "Age >= 30 days.  Default: dim + light weight."
+  :group 'eltainer)
+
 ;;; ---------------------------------------------------------------------------
 ;;; Helpers
 
@@ -78,6 +108,29 @@ Returns \"5d\" / \"2h\" / \"30m\" / \"15s\".  nil → \"?\"."
        ((< secs 3600)  (format "%dm" (truncate (/ secs 60))))
        ((< secs 86400) (format "%dh" (truncate (/ secs 3600))))
        (t              (format "%dd" (truncate (/ secs 86400))))))))
+
+(defun eltainer-ui-age-face (timestamp)
+  "Return the age-tier face appropriate for ISO-8601 TIMESTAMP.
+Tier boundaries: 1h / 1d / 1w / 30d.  nil → `eltainer-dim'.
+Used by callers that propertise the result of
+`eltainer-ui-age-string'."
+  (if (null timestamp)
+      'eltainer-dim
+    (let* ((then (float-time (date-to-time timestamp)))
+           (secs (- (float-time) then)))
+      (cond
+       ((< secs 3600)         'eltainer-age-very-new)
+       ((< secs 86400)        'eltainer-age-new)
+       ((< secs 604800)       'eltainer-age-medium)
+       ((< secs 2592000)      'eltainer-age-old)
+       (t                     'eltainer-age-ancient)))))
+
+(defun eltainer-ui-age-render (timestamp)
+  "Format TIMESTAMP as a propertised age string with the tier face.
+Convenience for the common pattern of `(propertize (age-string …)
+\\='font-lock-face (age-face …))'."
+  (propertize (eltainer-ui-age-string timestamp)
+              'font-lock-face (eltainer-ui-age-face timestamp)))
 
 (defun eltainer-ui-truncate (str width)
   "Truncate STR to WIDTH chars; appends an ellipsis if it had to."

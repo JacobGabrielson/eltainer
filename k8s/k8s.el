@@ -288,7 +288,7 @@ since a timer refresh fires no `post-command-hook'."
   "Return metadata.labels alist from RESOURCE."
   (cdr (assq 'labels (cdr (assq 'metadata resource)))))
 
-(defalias 'k8s--age-string #'eltainer-ui-age-string)
+(defalias 'k8s--age-string #'eltainer-ui-age-render)
 
 (defun k8s--phase-face (phase)
   "Return the face for PHASE string."
@@ -937,7 +937,7 @@ where the cursor is."
         (format "  %-42s %-10s %-6s %s\n"
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (format "%d/%d" ready replicas)
-                (propertize age 'font-lock-face 'k8s-dim)
+                age
                 (propertize image 'font-lock-face 'k8s-dim)))
       (let* ((spec (cdr (assq 'spec deploy)))
              (strategy (or (cdr (assq 'type (cdr (assq 'strategy spec)))) "?"))
@@ -975,7 +975,7 @@ where the cursor is."
         (format "  %-42s %-10s %-6s %s\n"
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (format "%d/%d" ready replicas)
-                (propertize age 'font-lock-face 'k8s-dim)
+                age
                 (propertize image 'font-lock-face 'k8s-dim)))
       (let* ((spec (cdr (assq 'spec sts)))
              (policy (or (cdr (assq 'podManagementPolicy spec)) "OrderedReady"))
@@ -1014,7 +1014,7 @@ where the cursor is."
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (format "%d/%d" ready desired)
                 (propertize (format "%d" available) 'font-lock-face 'k8s-dim)
-                (propertize age 'font-lock-face 'k8s-dim)
+                age
                 (propertize image 'font-lock-face 'k8s-dim)))
       (let* ((spec (cdr (assq 'spec ds)))
              (selector (cdr (assq 'matchLabels (cdr (assq 'selector spec)))))
@@ -1065,7 +1065,7 @@ where the cursor is."
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (propertize phase 'font-lock-face (k8s--phase-face phase))
                 (format "%d/%d" succeeded completions)
-                (propertize age 'font-lock-face 'k8s-dim)))
+                age))
       (insert (propertize (format "    Active: %d  Succeeded: %d  Failed: %d\n"
                                   active succeeded failed)
                           'font-lock-face 'k8s-dim))
@@ -1100,7 +1100,7 @@ where the cursor is."
                             (if (string= suspend "True") 'k8s-status-pending
                               'k8s-dim))
                 (propertize (format "%d" active) 'font-lock-face 'k8s-dim)
-                (propertize last-age 'font-lock-face 'k8s-dim)))
+                last-age))
       (k8s--insert-labels (k8s--resource-labels cj) "    ")
       (insert "\n"))))
 
@@ -1274,7 +1274,7 @@ daemonsets, jobs and services."
                             (k8s--phase-face (if (string= type "ClusterIP")
                                                  "Active" type)))
                 cluster-ip
-                (propertize age 'font-lock-face 'k8s-dim)
+                age
                 (propertize ports 'font-lock-face 'k8s-dim)))
       (let ((selector (cdr (assq 'selector spec)))
             (external-name (cdr (assq 'externalName spec))))
@@ -1322,7 +1322,7 @@ daemonsets, jobs and services."
                 (propertize hosts 'font-lock-face 'k8s-dim)
                 address
                 (propertize class 'font-lock-face 'k8s-dim)
-                (propertize age 'font-lock-face 'k8s-dim)))
+                age))
       ;; Detail: rules
       (when rules
         (seq-doseq (rule rules)
@@ -1362,7 +1362,7 @@ daemonsets, jobs and services."
         (format "  %-42s %-10s %s\n"
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (format "%d" data-count)
-                (propertize age 'font-lock-face 'k8s-dim)))
+                age))
       ;; Show key names (not values — they can be huge)
       (when data
         (insert (propertize "    Keys: " 'font-lock-face 'k8s-dim))
@@ -1396,7 +1396,7 @@ daemonsets, jobs and services."
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (propertize type 'font-lock-face 'k8s-dim)
                 (format "%d" data-count)
-                (propertize age 'font-lock-face 'k8s-dim)))
+                age))
       ;; Show key names only (never values!)
       (when data
         (insert (propertize "    Keys: " 'font-lock-face 'k8s-dim))
@@ -1450,7 +1450,7 @@ agent-sandbox controller isn't running)."
                 (propertize ready 'font-lock-face (k8s--phase-face ready))
                 (propertize service 'font-lock-face 'k8s-dim)
                 (propertize ip 'font-lock-face 'k8s-dim)
-                (propertize age 'font-lock-face 'k8s-dim)))
+                age))
       (let ((fqdn (cdr (assq 'serviceFQDN status)))
             (replicas (cdr (assq 'replicas status))))
         (when fqdn
@@ -1666,7 +1666,7 @@ of pods scheduled on it."
                 (propertize status 'font-lock-face
                             (if ready 'k8s-status-running 'k8s-status-failed))
                 (propertize version 'font-lock-face 'k8s-dim)
-                (propertize age 'font-lock-face 'k8s-dim)))
+                age))
       (k8s--insert-node-details node metrics prom pod-count))))
 
 (defun k8s--nodes-refresh ()

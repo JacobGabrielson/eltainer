@@ -91,7 +91,7 @@ Set this to a `docker-config' struct to bypass environment detection."
 ;;; ---------------------------------------------------------------------------
 ;;; Shared helpers
 
-(defalias 'docker--age-string #'eltainer-ui-age-string)
+(defalias 'docker--age-string #'eltainer-ui-age-render)
 (defalias 'docker--truncate #'eltainer-ui-truncate)
 
 (defun docker--status-face (state)
@@ -246,7 +246,7 @@ Filled by the stats poll timer; read while rendering container detail.")
                 (propertize state 'font-lock-face (docker--status-face state))
                 (docker--truncate image 25)
                 (propertize ports 'font-lock-face 'docker-dim)
-                (propertize age 'font-lock-face 'docker-dim)))
+                age))
       ;; Collapsible detail body
       (insert (propertize (format "    Status:  %s\n" status)
                           'font-lock-face 'docker-dim))
@@ -304,7 +304,7 @@ tick can reap entries for containers no longer on the daemon."
                 (propertize repo 'font-lock-face 'docker-image-name)
                 (propertize tag 'font-lock-face 'docker-dim)
                 (propertize size 'font-lock-face 'docker-dim)
-                (propertize age 'font-lock-face 'docker-dim)))
+                age))
       ;; Collapsible detail body
       (insert (propertize (format "    ID:   %s\n" id)
                           'font-lock-face 'docker-dim))

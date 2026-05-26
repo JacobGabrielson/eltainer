@@ -97,7 +97,7 @@ Shows Terminating when deletionTimestamp is set (like kubectl does)."
                 (propertize (or phase "?") 'font-lock-face (k8s--phase-face phase))
                 ready
                 (propertize (format "%d" restarts) 'font-lock-face 'k8s-dim)
-                (propertize age 'font-lock-face 'k8s-dim)
+                age
                 (propertize ip 'font-lock-face 'k8s-dim)))
       ;; Collapsible detail body (hidden by default, expand with TAB)
       (k8s--insert-pod-details pod))))

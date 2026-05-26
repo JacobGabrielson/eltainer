@@ -15,30 +15,6 @@ Convention:
 
 ---
 
-## Age column color tiers  *(status: drafted)*
-
-`eltainer-ui-age-string` returns `"5d"` / `"2h"` / `"30m"` / `"15s"`
-but every caller propertises the result with `eltainer-dim`
-unconditionally — old and young pods look identical.
-
-Plan:
-- Add five faces in `eltainer-ui.el`: `eltainer-age-very-new` (< 1h),
-  `eltainer-age-new` (< 1d), `eltainer-age-medium` (< 1w),
-  `eltainer-age-old` (< 1mo), `eltainer-age-ancient` (≥ 1mo).
-  Defaults: blue / green / default / yellow / shadow (or similar —
-  one of each in the standard term palette so it works on dark and
-  light themes).
-- Add `eltainer-ui-age-face TIMESTAMP` companion that returns the
-  right face for the same timestamp.  Tier boundaries: 3600 / 86400
-  / 604800 / 2592000 seconds (1h / 1d / 1w / 30d).
-- Sweep every age-render site (`grep '-age-string'` lists them) to
-  propertise with the face the helper returns instead of
-  `eltainer-dim`.  ~15 call sites; one-line change each.
-- Test: faces returned for synthetic ISO-8601 timestamps at each
-  tier boundary.
-
----
-
 ## Ingress: `RET` on a backend line jumps to the Service / Pods  *(status: drafted)*
 
 Under each Ingress (k8s.el §Ingresses, `k8s--insert-ingress-line`)
