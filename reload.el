@@ -27,6 +27,7 @@
     "docker-auth"
     "docker-pull"
     "docker-fs"
+    "docker-dired"
     "docker-metrics"
     "docker")
   "Docker-side modules in load order (dependencies first).")

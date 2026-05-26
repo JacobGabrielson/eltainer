@@ -72,6 +72,7 @@ dashboard if that's what you want.
 | `s` `S` `r` `K` | Start / Stop / Restart / Kill container |
 | `l` | Tail logs (streaming, stdout / stderr demuxed) |
 | `e` | Exec a shell inside the container (TTY) |
+| `f` | Browse the container's filesystem (real dired-mode buffer; containers view) |
 | `M` | Per-container metrics buffer (containers view) |
 | `j` `J` | Join / leave a network |
 
@@ -176,6 +177,8 @@ Metrics polling defaults to once every 30 seconds — tune via
 eltainer.el              Dashboard + `M-x eltainer'
 eltainer-ui.el           Shared faces, age-string, describe-value
 eltainer-gauge.el        Shared text gauges + sparklines for the metrics views
+eltainer-fs.el           Shared FS-listing scripts + entry struct + parser
+eltainer-dired.el        Shared dired-mode parent for the FS browser
 eltainer-terminal.el     eat-backed terminal host for interactive exec
 eltainer-shell-helper.el Invoke external helpers (cred / exec plugins)
 reload.el                Dev helper: byte-compile + reload both halves
@@ -194,6 +197,9 @@ docker/
   docker-exec.el         Upgrade-hijacked /exec/{id}/start TTY
   docker-auth.el         ~/.docker/config.json + docker-credential-* helpers
   docker-pull.el         Streamed /images/create with per-layer progress
+  docker-fs.el           Filesystem listing via docker-exec; cat via the
+                         archive API (works on distroless / scratch)
+  docker-dired.el        Dired-mode buffer over a container's filesystem
   docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 

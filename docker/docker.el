@@ -650,6 +650,8 @@ response updates the cache and schedules a debounced re-render."
 (keymap-set docker-containers-mode-map "J" #'docker-network-disconnect-at-point)
 (keymap-set docker-containers-mode-map "e" #'docker-exec-at-point)
 (keymap-set docker-containers-mode-map "M" #'docker-container-metrics-at-point)
+(autoload 'docker-dired-browse-at-point "docker-dired" nil t)
+(keymap-set docker-containers-mode-map "f" #'docker-dired-browse-at-point)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Transient dispatch

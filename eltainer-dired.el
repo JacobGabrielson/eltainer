@@ -322,7 +322,14 @@ entry point.  v1 is read-only — write operations (rename, delete,
 copy, mkdir, wdired) error out with a pointer to the plan doc."
   :group 'eltainer-dired
   (setq-local revert-buffer-function #'eltainer-dired-revert)
-  (setq-local require-final-newline nil))
+  (setq-local require-final-newline nil)
+  ;; Pin the listing-switches dired *thinks* this buffer was produced
+  ;; with.  Critically this must NOT contain `-F' / `--classify': our
+  ;; emitter writes no type-indicator suffixes, but if dired sees `-F'
+  ;; in the switches it back-steps one char off `dired-move-to-end-of-
+  ;; filename' to strip an adornment that isn't there — and eats the
+  ;; last real char of every name (`bin' -> `bi').
+  (setq-local dired-actual-switches "-al"))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Entry point for child modes
@@ -331,7 +338,9 @@ copy, mkdir, wdired) error out with a pointer to the plan doc."
   "Return the conventional buffer name for the current sentinel."
   (format "*%s:%s*" eltainer-dired--label eltainer-dired--remote-dir))
 
-(defun eltainer-dired-open (label sentinel-prefix initial-remote-dir list-fn cat-fn)
+(cl-defun eltainer-dired-open (label sentinel-prefix initial-remote-dir
+                                     list-fn cat-fn
+                                     &key (mode #'eltainer-dired-mode))
   "Open a container-dired buffer.
 
 LABEL — short identity for the mode-line / buffer name
@@ -342,15 +351,19 @@ SENTINEL-PREFIX — the host-side prefix for sentinel paths, ending
 INITIAL-REMOTE-DIR — absolute path inside the container to land on.
 LIST-FN / CAT-FN — backend closures the parent calls without
         knowing about docker vs. k8s.
+MODE (keyword) — major mode to enter; defaults to
+        `eltainer-dired-mode'.  Child modes (e.g.
+        `docker-dired-mode') pass themselves here so we don't
+        re-enter the mode after binding the backends.
 
 Pops the buffer."
   (let ((buf (get-buffer-create
               (format "*%s:%s*" label initial-remote-dir))))
     (with-current-buffer buf
-      ;; Enter the mode *first* — `define-derived-mode' runs
-      ;; `kill-all-local-variables', which would otherwise wipe the
-      ;; backend closures we're about to bind.
-      (eltainer-dired-mode)
+      ;; Enter the (possibly child) mode *first* — `define-derived-mode'
+      ;; runs `kill-all-local-variables', which would otherwise wipe
+      ;; the backend closures we're about to bind.
+      (funcall mode)
       (setq-local default-directory
                   (concat sentinel-prefix
                           (file-name-as-directory initial-remote-dir)))
