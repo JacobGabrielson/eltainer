@@ -495,6 +495,7 @@ TAIL-LINES bounds the initial history (default 500)."
 \\{k8s-log-mode-map}"
   :group 'k8s
   (setq-local truncate-lines nil)
+  (hl-line-mode 1)
   (add-hook 'kill-buffer-hook #'k8s--log-cleanup nil t))
 
 ;; Defined in k8s-marks.el / k8s-multilog.el (k8s requires them).

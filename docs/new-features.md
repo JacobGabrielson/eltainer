@@ -15,34 +15,6 @@ Convention:
 
 ---
 
-## Logs view: `p` is misbound + no current-line highlight  *(status: drafted)*
-
-Two small things in `k8s-multilog-mode` (and worth applying to
-`docker-logs-mode` too):
-
-1. **`p` is bound to `k8s-multilog-pause-toggle` but should be
-   `previous-line`.**  Every other view uses `n`/`p` for line
-   navigation; muscle memory is wrong here.  Move pause to `P`
-   (capital).  See `k8s/k8s-multilog.el:171`.
-2. **Current line should be visibly highlighted** in any log view.
-   `(hl-line-mode 1)` in the mode body of `docker-logs-mode`,
-   `k8s-multilog-mode`, and (for free) any future log buffer is the
-   one-liner.  No new face — `hl-line` already inherits sanely.
-
-Plan:
-- Edit `k8s/k8s-multilog.el`: rebind `p` → `previous-line`, `P` →
-  `k8s-multilog-pause-toggle`.  Bind `n` → `next-line` explicitly
-  (special-mode's parent already gives us this, but explicit is
-  safer against future re-parenting).
-- Edit `docker/docker-logs.el` + `k8s/k8s-multilog.el` mode bodies:
-  add `(hl-line-mode 1)`.  Confirm it doesn't fight the ANSI-color
-  rendering we already do.
-- README: update the log-view key table.
-- Test: ERT-poke a `k8s-multilog-mode` buffer, assert `p` is bound
-  to `previous-line` and `P` to the pause toggle.
-
----
-
 ## Age column color tiers  *(status: drafted)*
 
 `eltainer-ui-age-string` returns `"5d"` / `"2h"` / `"30m"` / `"15s"`

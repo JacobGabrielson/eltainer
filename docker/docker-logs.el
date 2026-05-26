@@ -55,6 +55,7 @@
 \\{docker-logs-mode-map}"
   :group 'docker
   (setq-local truncate-lines nil)
+  (hl-line-mode 1)
   (add-hook 'kill-buffer-hook #'docker-logs--cleanup nil t))
 
 (defun docker-logs--buffer-name (container)

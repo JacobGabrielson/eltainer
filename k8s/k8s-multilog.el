@@ -168,7 +168,12 @@ before being handed off."
   :parent special-mode-map
   "g" #'k8s-multilog-restart
   "q" #'quit-window
-  "p" #'k8s-multilog-pause-toggle
+  ;; `p' / `n' navigate (matching every other view); pause moves to
+  ;; capital `P'.  Muscle memory is "p = previous-line" everywhere
+  ;; else in eltainer.
+  "n" #'next-line
+  "p" #'previous-line
+  "P" #'k8s-multilog-pause-toggle
   "c" #'k8s-multilog-clear)
 
 (define-derived-mode k8s-multilog-mode special-mode "K8s:Multilog"
@@ -177,6 +182,7 @@ before being handed off."
 \\{k8s-multilog-mode-map}"
   :group 'k8s-multilog
   (setq-local truncate-lines nil)
+  (hl-line-mode 1)
   (add-hook 'kill-buffer-hook #'k8s-multilog--cleanup nil t))
 
 ;;; ---------------------------------------------------------------------------

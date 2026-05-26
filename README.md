@@ -106,6 +106,7 @@ metrics buffer for the container.
 | `l` | Tail pod logs (pods view); on a Deployment / StatefulSet / DaemonSet / Job / Service, opens a multi-pod tail (each pod colored distinctly); on a CronJob, tails the last run |
 | `m` / `u` / `U` / `t` / `DEL` | dired-style marks: mark / unmark / unmark-all / toggle / unmark-backward (works in any view) |
 | `L` | Multipod tail of every marked pod (pods view) |
+| In any log view: `n` / `p` navigate, `P` pause/resume the stream, current line highlighted |
 | `e` | Interactive TTY exec into the pod (pods view only) |
 | `f` | Browse the pod's filesystem (real dired-mode buffer; pods view only) |
 | In the FS browser: `D R C + I C-x C-q` | Delete / rename / copy / mkdir / import-from-host / wdired |
