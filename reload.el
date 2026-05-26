@@ -41,7 +41,7 @@
     "k8s-multilog"
     "k8s-watch"
     "k8s-fs"
-    "k8s-fs-ui"
+    "k8s-dired"
     "k8s-pods"
     "k8s-exec"
     "k8s")

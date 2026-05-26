@@ -106,7 +106,7 @@ metrics buffer for the container.
 | `m` / `u` / `U` / `t` / `DEL` | dired-style marks: mark / unmark / unmark-all / toggle / unmark-backward (works in any view) |
 | `L` | Multipod tail of every marked pod (pods view) |
 | `e` | Interactive TTY exec into the pod (pods view only) |
-| `f` | Read-only filesystem browser for the pod (pods view only) |
+| `f` | Browse the pod's filesystem (real dired-mode buffer; pods view only) |
 | `M` | Per-pod metrics buffer (pods view only) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
@@ -215,7 +215,8 @@ k8s/
                          one colour per pod, line-by-line interleaved
   k8s-pods.el            Pods view: phases, restarts, streamed logs,
                          container subsections, inline metrics
-  k8s-fs.el / k8s-fs-ui.el  Pod-fs browser
+  k8s-fs.el              Pod-fs backend (list / stat / cat over k8s-exec)
+  k8s-dired.el           Dired-mode buffer over a pod container's filesystem
   k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```

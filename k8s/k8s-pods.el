@@ -12,7 +12,7 @@
 (require 'docker-http)
 (require 'k8s)
 (require 'k8s-api)
-(require 'k8s-fs-ui)
+(require 'k8s-dired)
 (require 'k8s-metrics)
 
 ;; Declared up here so `k8s--insert-pod-details' (which reads the cache
@@ -552,22 +552,6 @@ that container directly; on the pod line, picks a container."
          (conn (k8s--ensure-connection)))
     (k8s--open-pod-log-buffer conn ns name container)))
 
-(defun k8s-pod-browse-at-point ()
-  "Open a read-only filesystem browser for the pod at point.
-With point on a container subsection, browses that container
-directly; on the pod line, picks a container."
-  (interactive)
-  (let* ((target (k8s--pod+container-at-point))
-         (pod (car target))
-         (preselected (cdr target))
-         (name (k8s--resource-name pod))
-         (ns (k8s--resource-namespace pod))
-         (containers (k8s--pod-container-names pod))
-         (container (or preselected
-                        (k8s-fs--pick-container ns name containers)))
-         (conn (k8s--ensure-connection)))
-    (k8s-pod-browse conn ns name container "/")))
-
 (defun k8s-pod-exec-at-point ()
   "Open an interactive TTY exec into the pod at point.
 
@@ -640,7 +624,7 @@ covers every container in the pod either way."
 (pcase-dolist (`(,k ,cmd)
                '(("l" k8s-pod-view-logs)
                  ("e" k8s-pod-exec-at-point)
-                 ("f" k8s-pod-browse-at-point)
+                 ("f" k8s-dired-browse-at-point)
                  ("M" k8s-pod-metrics-at-point)
                  ("L" k8s-pods-multilog-marked)))
   (keymap-set k8s-pods-mode-map k cmd))

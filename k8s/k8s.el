@@ -827,7 +827,7 @@ LINE-FN inserts one item."
 ;; k8s-pods buffer is loaded.
 (declare-function k8s-pod-view-logs       "k8s-pods")
 (declare-function k8s-pod-exec-at-point   "k8s-pods")
-(declare-function k8s-pod-browse-at-point "k8s-pods")
+(declare-function k8s-dired-browse-at-point "k8s-dired")
 (declare-function k8s-pod-metrics-at-point "k8s-pods")
 
 (defun k8s--section-type-at-point ()
@@ -878,7 +878,7 @@ where the cursor is."
    "Pod at point"
    ("l" "Logs"       k8s-pod-view-logs)
    ("e" "Exec"       k8s-pod-exec-at-point)
-   ("f" "Browse fs"  k8s-pod-browse-at-point)
+   ("f" "Browse fs"  k8s-dired-browse-at-point)
    ("M" "Metrics"    k8s-pod-metrics-at-point)
    ("i" "Describe"   k8s-describe)
    ("d" "Delete"     k8s-delete-at-point)]
@@ -886,7 +886,7 @@ where the cursor is."
    "Container at point"
    ("l" "Logs"       k8s-pod-view-logs)
    ("e" "Exec"       k8s-pod-exec-at-point)
-   ("f" "Browse fs"  k8s-pod-browse-at-point)
+   ("f" "Browse fs"  k8s-dired-browse-at-point)
    ("M" "Metrics"    k8s-pod-metrics-at-point)]
   [:if (lambda () (k8s--point-on-p 'cronjob))
    "CronJob at point"
