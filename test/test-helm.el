@@ -189,6 +189,46 @@ metadata:
   (should-not (k8s-helm--manifest-summary nil))
   (should-not (k8s-helm--manifest-summary "")))
 
+(ert-deftest helm/manifest-resources-extracts-names ()
+  "Parses kind + metadata.name per document; nested name fields
+\(spec.template.metadata.name, spec.ports[].name) don't leak in."
+  (let* ((manifest "---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    app: web
+spec:
+  ports:
+  - name: http
+    port: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template:
+    metadata:
+      labels:
+        app: web
+      name: should-not-be-captured
+    spec:
+      containers:
+      - name: nginx
+        image: nginx
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-conf
+")
+         (resources (k8s-helm--manifest-resources manifest)))
+    (should (equal '("web") (cdr (assoc "Service" resources))))
+    (should (equal '("web") (cdr (assoc "Deployment" resources))))
+    (should (equal '("web-conf") (cdr (assoc "ConfigMap" resources))))))
+
 (ert-deftest helm/decode-secret-attaches-secret-metadata ()
   "Decoded release carries the source secret's metadata so the
 view can render age etc."

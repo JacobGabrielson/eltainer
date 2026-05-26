@@ -624,12 +624,27 @@ Picks the action from the text property under point:
      (target                 (k8s--jump-to-target target))
      (t                      (call-interactively #'magit-section-toggle)))))
 
+;; Defined in k8s-helm.el (loaded after k8s.el).  At runtime when
+;; `k8s--jump-to-target' runs the helm-resources arm, the helm view is
+;; necessarily up so the variable is bound — this declaration just
+;; quiets the byte-compiler's free-variable warning.
+(defvar k8s-helm--kind-to-view)
+
 (defun k8s--jump-to-target (target)
   "Follow the `k8s-jump-target' property TARGET.
 TARGET is a list whose CAR is the kind and CDR carries the
-identifying details:
-  (service NS NAME) — open the services view and put point on
-                       NAME within NS.
+identifying details.  Recognised forms:
+
+  (service NS NAME)
+    Open the services view, switch namespace if needed, scroll to
+    NAME.
+
+  (helm-resources NS KIND (NAME ...))
+    Open the resource view for KIND (per
+    `k8s-helm--kind-to-view'), switch to NS, and pre-set a name-
+    regex filter narrowing to exactly the listed names.  Used by
+    `RET' on a Helm release's RESOURCES tally row.
+
 Future kinds (pod / node / endpoints / configmap / …) add their
 own arms here."
   (pcase target
@@ -644,6 +659,24 @@ own arms here."
             (format "^  %s[[:space:]]" (regexp-quote name)) nil t)
            (beginning-of-line)
          (message "k8s: %s/%s not found in services view" ns name))))
+    (`(helm-resources ,ns ,kind ,names)
+     (let ((entry (assoc kind k8s-helm--kind-to-view)))
+       (unless entry
+         (user-error "k8s-helm: no resource view registered for kind %S"
+                     kind))
+       (funcall (nth 1 entry))
+       (with-current-buffer (get-buffer (nth 2 entry))
+         (when ns (setq-local k8s--namespace ns))
+         (setq-local eltainer-filter--state
+                     (eltainer-filter--new
+                      :name-regex
+                      (concat "\\`\\("
+                              (mapconcat #'regexp-quote names "\\|")
+                              "\\)\\'")))
+         (revert-buffer nil t)
+         (message "k8s: %s view narrowed to %d %s resource%s from the release"
+                  kind (length names) kind
+                  (if (= 1 (length names)) "" "s")))))
     (_
      (message "k8s-jump-target: don't know how to follow %S" target))))
 

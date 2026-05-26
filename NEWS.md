@@ -13,6 +13,18 @@ the in-flight backlog.
 
 ## 2026-05-26
 
+### Helm RESOURCES rows are jump-targets
+
+Expanding a Helm release row shows a per-kind tally of the rendered
+manifest (`1 Deployment / 1 Service …`).  Each kind line with a
+registered resource view (Service, Deployment, StatefulSet,
+DaemonSet, Job, CronJob, ConfigMap, Secret, Ingress, Pod) is now
+`RET`-actionable — jumps to that view, switches to the release's
+namespace, and pre-sets a name-regex filter narrowing to *exactly
+the resources from that release*.  Resource names are pulled from
+the manifest directly, so the filter is precise no matter what
+labels the chart did or didn't add.
+
 ### Helm 3 releases view
 
 `H` on the dashboard (or `?` → *Helm releases* from any k8s view)

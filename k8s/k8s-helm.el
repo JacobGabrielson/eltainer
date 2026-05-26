@@ -168,25 +168,71 @@ helm baseline."
           "NAME" "REV" "STATUS" "CHART" "APP" "AGE")
   "Column titles for the helm view.")
 
-(defun k8s-helm--manifest-summary (manifest)
-  "Return a list `((KIND . COUNT) ...)' from MANIFEST's YAML text.
-Counts `kind:' lines per document.  Doesn't pretend to be a real
-YAML parser — works because every Helm manifest emits `kind:' on
-its own line at indent 0 (or 2 in some chart conventions).  Empty
-MANIFEST returns nil."
+(defun k8s-helm--manifest-resources (manifest)
+  "Return `((KIND . (NAME ...)) ...)' parsed from MANIFEST YAML.
+For each `kind: X' document, captures the FIRST `name:' under the
+top-level `metadata:' block.  Works on any manifest that follows
+helm's standard 2-space YAML indent (so: every helm chart).
+
+Result sorted by descending count, then alpha by kind."
   (when (and manifest (not (string-empty-p manifest)))
-    (let ((counts (make-hash-table :test 'equal)))
+    (let ((groups (make-hash-table :test 'equal))
+          kind in-metadata)
       (dolist (line (split-string manifest "\n"))
-        (when (string-match "^[ ]\\{0,2\\}kind:[ \t]+\\(\\sw+\\)" line)
-          (let ((k (match-string 1 line)))
-            (puthash k (1+ (gethash k counts 0)) counts))))
+        (cond
+         ;; Document separator resets per-doc state.
+         ((string-match-p "\\`---" line)
+          (setq kind nil in-metadata nil))
+         ;; `kind: X' (column 0)
+         ((string-match "\\`kind:[ \t]+\\(\\sw+\\)" line)
+          (setq kind (match-string 1 line) in-metadata nil))
+         ;; `metadata:' (column 0) — start watching for the name
+         ((string-match-p "\\`metadata:[ \t]*$" line)
+          (setq in-metadata t))
+         ;; `  name: X' (exactly 2-space indent under metadata)
+         ((and in-metadata kind
+               (string-match "\\`  name:[ \t]+\\([-a-zA-Z0-9_.]+\\)" line))
+          (push (match-string 1 line)
+                (gethash kind groups nil))
+          ;; First name wins; subsequent metadata.name's at deeper
+          ;; nesting (e.g. spec.template.metadata.name) shouldn't
+          ;; double-count.
+          (setq kind nil in-metadata nil))
+         ;; A new column-0 key while we're in metadata closes it.
+         ((and in-metadata
+               (not (string-match-p "\\`[ \t]" line))
+               (not (string-empty-p line)))
+          (setq in-metadata nil))))
       (let (out)
-        (maphash (lambda (k v) (push (cons k v) out)) counts)
-        ;; Sort by count desc, then alpha.
+        (maphash (lambda (k v) (push (cons k (nreverse v)) out)) groups)
         (sort out (lambda (a b)
-                    (if (= (cdr a) (cdr b))
-                        (string< (car a) (car b))
-                      (> (cdr a) (cdr b)))))))))
+                    (let ((la (length (cdr a))) (lb (length (cdr b))))
+                      (if (= la lb)
+                          (string< (car a) (car b))
+                        (> la lb)))))))))
+
+(defun k8s-helm--manifest-summary (manifest)
+  "Return `((KIND . COUNT) ...)' from MANIFEST — counts per kind.
+Thin wrapper over `k8s-helm--manifest-resources'."
+  (mapcar (lambda (g) (cons (car g) (length (cdr g))))
+          (k8s-helm--manifest-resources manifest)))
+
+(defconst k8s-helm--kind-to-view
+  '(("Service"     k8s-services      "*k8s:services*")
+    ("Deployment"  k8s-deployments   "*k8s:deployments*")
+    ("StatefulSet" k8s-statefulsets  "*k8s:statefulsets*")
+    ("DaemonSet"   k8s-daemonsets    "*k8s:daemonsets*")
+    ("Job"         k8s-jobs          "*k8s:jobs*")
+    ("CronJob"     k8s-cronjobs      "*k8s:cronjobs*")
+    ("ConfigMap"   k8s-configmaps    "*k8s:configmaps*")
+    ("Secret"      k8s-secrets       "*k8s:secrets*")
+    ("Ingress"     k8s-ingresses     "*k8s:ingresses*")
+    ("Pod"         k8s-pods          "*k8s:pods*"))
+  "Map from a manifest's `kind:' string to (VIEW-CMD BUFFER-NAME).
+Used by `k8s--jump-to-target' to route a Helm RESOURCES `RET' into
+the right resource view.  Kinds without an entry here (NetworkPolicy,
+ServiceAccount, PodDisruptionBudget, custom CRDs, …) render the
+tally line as inactive — `RET' falls through to section-toggle.")
 
 (defun k8s-helm--insert-line (rel)
   "Insert one row for RELEASE."
@@ -208,15 +254,30 @@ MANIFEST returns nil."
                 (propertize chart 'font-lock-face 'k8s-dim)
                 (propertize app 'font-lock-face 'k8s-dim)
                 age))
-      ;; Detail: manifest resource tally + NOTES.txt.
-      (let ((tally (k8s-helm--manifest-summary (k8s-helm--rel-manifest rel))))
-        (when tally
+      ;; Detail: manifest resource tally + NOTES.txt.  Each tally
+      ;; line whose kind has a registered view (see
+      ;; `k8s-helm--kind-to-view') is RET-actionable — jumps to that
+      ;; view filtered to *this release's* resources of that kind.
+      (let* ((rs (k8s-helm--manifest-resources (k8s-helm--rel-manifest rel)))
+             (ns (k8s-helm--rel-namespace rel)))
+        (when rs
           (insert (propertize "    RESOURCES:\n"
                               'font-lock-face 'k8s-section-heading))
-          (dolist (entry tally)
-            (insert (propertize
-                     (format "      %3d  %s\n" (cdr entry) (car entry))
-                     'font-lock-face 'k8s-dim)))))
+          (dolist (entry rs)
+            (let* ((kind (car entry))
+                   (names (cdr entry))
+                   (jumpable (assoc kind k8s-helm--kind-to-view))
+                   (line (format "      %3d  %s\n" (length names) kind))
+                   (props (if jumpable
+                              (list 'font-lock-face 'eltainer-resource-name
+                                    'k8s-jump-target
+                                    (list 'helm-resources ns kind names)
+                                    'help-echo
+                                    (format "RET: open %s view narrowed to this release's %d resource%s"
+                                            kind (length names)
+                                            (if (= 1 (length names)) "" "s")))
+                            (list 'font-lock-face 'k8s-dim))))
+              (insert (apply #'propertize line props))))))
       (let ((notes (k8s-helm--rel-notes rel)))
         (when (and notes (not (string-empty-p notes)))
           (insert (propertize "    NOTES:\n" 'font-lock-face 'k8s-section-heading))
