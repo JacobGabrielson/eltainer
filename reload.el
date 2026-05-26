@@ -72,8 +72,8 @@ themselves are preserved — only their timers/streams die."
                             load-path))
          (errors nil))
     ;; Top-level shared modules first.
-    (dolist (mod '("eltainer-ui" "eltainer-gauge" "eltainer-terminal"
-                   "eltainer-shell-helper"))
+    (dolist (mod '("eltainer-ui" "eltainer-gauge" "eltainer-fs"
+                   "eltainer-terminal" "eltainer-shell-helper"))
       (let ((src (expand-file-name (concat mod ".el") eltainer--source-dir)))
         (when (file-exists-p src)
           (unless (byte-compile-file src) (push mod errors))

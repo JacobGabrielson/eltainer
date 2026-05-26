@@ -13,7 +13,7 @@
 ;;
 ;; Multi-container pods prompt for a container via `completing-read';
 ;; the choice is remembered per (namespace, pod) for the session.
-;; Files larger than `k8s-fs-max-cat-bytes' (5MB default) prompt for
+;; Files larger than `eltainer-fs-max-cat-bytes' (5MB default) prompt for
 ;; confirmation before reading.
 
 (require 'cl-lib)
@@ -27,7 +27,7 @@
 (defvar-local k8s-fs--pod nil)
 (defvar-local k8s-fs--container nil)        ; may be nil for single-container pods
 (defvar-local k8s-fs--path nil)              ; absolute path in the pod
-(defvar-local k8s-fs--entries nil)           ; list of `k8s-fs-entry'
+(defvar-local k8s-fs--entries nil)           ; list of `eltainer-fs-entry'
 
 ;;; ---------------------------------------------------------------------------
 ;;; Container selection (memoized per pod)
@@ -78,19 +78,19 @@ the choice across calls for this session."
 
 (defun k8s-fs--insert-entry (entry)
   "Insert one ENTRY line, attaching it as a text property for hit-testing."
-  (let* ((type (k8s-fs-entry-type entry))
+  (let* ((type (eltainer-fs-entry-type entry))
          (line (format "%c%s  %s/%s  %8d  %s  %s%s\n"
                        (k8s-fs--type-char type)
-                       (k8s-fs-entry-mode-string entry)
-                       (k8s-fs-entry-owner entry)
-                       (k8s-fs-entry-group entry)
-                       (k8s-fs-entry-size entry)
-                       (k8s-fs--format-time (k8s-fs-entry-mtime entry))
-                       (k8s-fs-entry-name entry)
-                       (if (k8s-fs-entry-link-target entry)
-                           (format " -> %s" (k8s-fs-entry-link-target entry))
+                       (eltainer-fs-entry-mode-string entry)
+                       (eltainer-fs-entry-owner entry)
+                       (eltainer-fs-entry-group entry)
+                       (eltainer-fs-entry-size entry)
+                       (k8s-fs--format-time (eltainer-fs-entry-mtime entry))
+                       (eltainer-fs-entry-name entry)
+                       (if (eltainer-fs-entry-link-target entry)
+                           (format " -> %s" (eltainer-fs-entry-link-target entry))
                          ""))))
-    (insert (propertize line 'k8s-fs-entry entry
+    (insert (propertize line 'eltainer-fs-entry entry
                         'face (cl-case type
                                 (directory 'dired-directory)
                                 (symlink 'dired-symlink)
@@ -104,16 +104,16 @@ the choice across calls for this session."
     (k8s-fs--insert-header)
     (dolist (e (sort (copy-sequence k8s-fs--entries)
                      (lambda (a b)
-                       (let ((da (eq (k8s-fs-entry-type a) 'directory))
-                             (db (eq (k8s-fs-entry-type b) 'directory)))
+                       (let ((da (eq (eltainer-fs-entry-type a) 'directory))
+                             (db (eq (eltainer-fs-entry-type b) 'directory)))
                          (cond
                           ((and da (not db)) t)
                           ((and (not da) db) nil)
-                          (t (string< (k8s-fs-entry-name a)
-                                      (k8s-fs-entry-name b))))))))
+                          (t (string< (eltainer-fs-entry-name a)
+                                      (eltainer-fs-entry-name b))))))))
       (k8s-fs--insert-entry e))
     (goto-char (min saved-point (point-max)))
-    (unless (get-text-property (point) 'k8s-fs-entry)
+    (unless (get-text-property (point) 'eltainer-fs-entry)
       (k8s-fs--goto-first-entry))))
 
 (defun k8s-fs--goto-first-entry ()
@@ -121,13 +121,13 @@ the choice across calls for this session."
   (goto-char (point-min))
   (let (found)
     (while (and (not found) (not (eobp)))
-      (if (get-text-property (point) 'k8s-fs-entry)
+      (if (get-text-property (point) 'eltainer-fs-entry)
           (setq found t)
         (forward-line 1)))))
 
 (defun k8s-fs--entry-at-point ()
-  "Return the `k8s-fs-entry' on the current line, or nil."
-  (get-text-property (line-beginning-position) 'k8s-fs-entry))
+  "Return the `eltainer-fs-entry' on the current line, or nil."
+  (get-text-property (line-beginning-position) 'eltainer-fs-entry))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Navigation
@@ -148,7 +148,7 @@ the choice across calls for this session."
 (defun k8s-fs--resolve-symlink-target (entry)
   "Expand ENTRY's link-target against the current directory.
 Returns nil if ENTRY is not a symlink."
-  (let ((tgt (k8s-fs-entry-link-target entry)))
+  (let ((tgt (eltainer-fs-entry-link-target entry)))
     (when tgt
       (if (string-prefix-p "/" tgt)
           tgt
@@ -156,14 +156,14 @@ Returns nil if ENTRY is not a symlink."
 
 (defun k8s-fs--view-file (path size)
   "Open a read-only buffer with the contents of PATH (a file in the pod)."
-  (when (> size k8s-fs-max-cat-bytes)
+  (when (> size eltainer-fs-max-cat-bytes)
     (unless (yes-or-no-p
              (format "%s is %d bytes (cap %d). Open anyway? "
-                     path size k8s-fs-max-cat-bytes))
+                     path size eltainer-fs-max-cat-bytes))
       (user-error "Aborted")))
   (let* ((bytes (k8s-fs-cat k8s-fs--conn k8s-fs--ns k8s-fs--pod
                             k8s-fs--container path
-                            (max size k8s-fs-max-cat-bytes)))
+                            (max size eltainer-fs-max-cat-bytes)))
          (buf (get-buffer-create
                (format "*k8s:fs-file:%s/%s%s:%s*"
                        k8s-fs--ns k8s-fs--pod
@@ -204,14 +204,14 @@ buffer; symlinks are resolved one level and then visited."
 
 (defun k8s-fs--visit-entry (entry)
   "Visit ENTRY based on its type."
-  (let ((type (k8s-fs-entry-type entry))
-        (name (k8s-fs-entry-name entry)))
+  (let ((type (eltainer-fs-entry-type entry))
+        (name (eltainer-fs-entry-name entry)))
     (cl-case type
       (directory
        (k8s-fs--load (expand-file-name name k8s-fs--path)))
       (file
        (k8s-fs--view-file (expand-file-name name k8s-fs--path)
-                          (k8s-fs-entry-size entry)))
+                          (eltainer-fs-entry-size entry)))
       (symlink
        (let ((target (k8s-fs--resolve-symlink-target entry)))
          (unless target
@@ -220,11 +220,11 @@ buffer; symlinks are resolved one level and then visited."
              (let ((tgt-entry (k8s-fs-stat k8s-fs--conn k8s-fs--ns
                                            k8s-fs--pod k8s-fs--container
                                            target)))
-               (cl-case (k8s-fs-entry-type tgt-entry)
+               (cl-case (eltainer-fs-entry-type tgt-entry)
                  (directory (k8s-fs--load target))
-                 (file (k8s-fs--view-file target (k8s-fs-entry-size tgt-entry)))
+                 (file (k8s-fs--view-file target (eltainer-fs-entry-size tgt-entry)))
                  (t (message "Symlink target %s is a %s" target
-                             (k8s-fs-entry-type tgt-entry)))))
+                             (eltainer-fs-entry-type tgt-entry)))))
            (error (message "Symlink target %s not reachable: %s"
                            target (error-message-string err))))))
       (t
@@ -252,18 +252,18 @@ buffer; symlinks are resolved one level and then visited."
   (let ((entry (k8s-fs--entry-at-point)))
     (unless entry (user-error "No entry on this line"))
     (with-help-window "*k8s:fs-info*"
-      (princ (format "Name:    %s\n" (k8s-fs-entry-name entry)))
-      (princ (format "Type:    %s\n" (k8s-fs-entry-type entry)))
-      (princ (format "Mode:    %s\n" (k8s-fs-entry-mode-string entry)))
-      (princ (format "Owner:   %s\n" (k8s-fs-entry-owner entry)))
-      (princ (format "Group:   %s\n" (k8s-fs-entry-group entry)))
-      (princ (format "Size:    %d bytes\n" (k8s-fs-entry-size entry)))
-      (princ (format "NLinks:  %d\n" (k8s-fs-entry-nlink entry)))
+      (princ (format "Name:    %s\n" (eltainer-fs-entry-name entry)))
+      (princ (format "Type:    %s\n" (eltainer-fs-entry-type entry)))
+      (princ (format "Mode:    %s\n" (eltainer-fs-entry-mode-string entry)))
+      (princ (format "Owner:   %s\n" (eltainer-fs-entry-owner entry)))
+      (princ (format "Group:   %s\n" (eltainer-fs-entry-group entry)))
+      (princ (format "Size:    %d bytes\n" (eltainer-fs-entry-size entry)))
+      (princ (format "NLinks:  %d\n" (eltainer-fs-entry-nlink entry)))
       (princ (format "Mtime:   %s (epoch %d)\n"
-                     (k8s-fs--format-time (k8s-fs-entry-mtime entry))
-                     (k8s-fs-entry-mtime entry)))
-      (when (k8s-fs-entry-link-target entry)
-        (princ (format "Target:  %s\n" (k8s-fs-entry-link-target entry)))))))
+                     (k8s-fs--format-time (eltainer-fs-entry-mtime entry))
+                     (eltainer-fs-entry-mtime entry)))
+      (when (eltainer-fs-entry-link-target entry)
+        (princ (format "Target:  %s\n" (eltainer-fs-entry-link-target entry)))))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Major mode
