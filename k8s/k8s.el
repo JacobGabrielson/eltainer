@@ -937,6 +937,9 @@ LINE-FN inserts one item."
 (autoload 'k8s-force-kill-pod-at-point  "k8s-actions" nil t)
 (autoload 'k8s-cordon-toggle-at-point   "k8s-actions" nil t)
 (autoload 'k8s-drain-at-point           "k8s-actions" nil t)
+(autoload 'k8s-portforward              "k8s-portforward" nil t)
+(autoload 'k8s-portforward-at-point     "k8s-portforward" nil t)
+(autoload 'k8s-portforward-list         "k8s-portforward" nil t)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Context-aware dispatch
