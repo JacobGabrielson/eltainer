@@ -117,6 +117,9 @@ metrics buffer for the container.
 | `M` | Per-pod metrics buffer (pods view only) |
 | `T` | Open the xray tree for the workload at point (Deployment / STS / DS / Job / CronJob / RS / Service / Pod) |
 | `Y` | Edit the YAML of the resource at point; `C-c C-c` PUTs the change back |
+| `S` `R` `K` | Scale / rollout-restart / force-kill the workload at point |
+| `c` `D` | Cordon-toggle / drain (Nodes view) |
+| `C-u l` | Show the *previous* container run's logs (after a crash) |
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
 | `RET` on an Ingress backend row | Jump to the referenced Service in the services view |
@@ -236,6 +239,7 @@ k8s/
   k8s-pulse.el           Cluster-pulse dashboard (phase counts, top consumers, events)
   k8s-xray.el            Recursive resource-tree view of a workload
   k8s-edit.el            Edit any resource's YAML in place, PUT-on-apply
+  k8s-actions.el         Scale / rollout-restart / force-kill / cordon / drain
   k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```

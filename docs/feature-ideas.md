@@ -71,28 +71,20 @@ single biggest leverage:
 Today eltainer is mostly read-only modulo `D` delete and the
 container-dired write ops.  The mainstream UIs offer:
 
-- **Scale workload** — `S` on a Deployment / STS / RS prompts for
-  a new replica count, PATCHes `.spec.replicas`.  Trivial.  *(idea)*
-- **Rollout restart** — `R` patches the `spec.template.metadata.
-  annotations` with `kubectl.kubernetes.io/restartedAt=<now>`,
-  which is exactly what `kubectl rollout restart` does.  Trivial.
-  *(idea)*
-- **Cordon / uncordon / drain nodes** — `C` cordons, `U` uncordons
-  (PATCH the Node's `.spec.unschedulable`), `D` drains (cordon
-  + iterate evictions via the eviction subresource).  Already
-  have the Nodes view.  *(idea)*
-- **Force-restart pod** — `K` (kill) — delete the pod (the
-  controller recreates it).  Distinct from `d` which is the
-  "remove this resource" semantic.  *(idea)*
+- **Scale workload** — `S` on a Deployment / STS / RS.
+  *(shipped 2026-05-27)*
+- **Rollout restart** — `R`.  *(shipped 2026-05-27)*
+- **Cordon / uncordon / drain nodes** — `c` toggles cordon, `D`
+  drains.  *(shipped 2026-05-27)*
+- **Force-restart pod** — `K`.  *(shipped 2026-05-27)*
 - **Edit YAML inline** — `Y` fetches the resource, drops it into
   a yaml-mode buffer with a header, `C-c C-c' PUTs it back.
   Server does the YAML round-trip via content-type negotiation;
   `resourceVersion' provides optimistic concurrency.
   *(shipped 2026-05-27)*
-- **Previous container logs** — `L` while on a CrashLoopBackOff
-  pod fetches with `?previous=true` so you see the LAST run, not
-  the current empty one.  One-line change to `k8s--log-start`.
-  *(idea)*
+- **Previous container logs** — `C-u l' on a Pod / container row
+  tails the kubelet's `?previous=true` stream.
+  *(shipped 2026-05-27)*
 
 ## Navigation + workflow (medium, high impact)
 

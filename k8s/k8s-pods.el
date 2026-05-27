@@ -469,7 +469,13 @@ TAIL-LINES bounds the initial history (default 500)."
          (query `(("follow" . "true")
                   ("tailLines" . ,(number-to-string (or tail-lines 500)))
                   ,@(when k8s--log-container
-                      `(("container" . ,k8s--log-container)))))
+                      `(("container" . ,k8s--log-container)))
+                  ;; `C-u l' on the pods view sets the buffer-local
+                  ;; `k8s--log-previous'; `?previous=true' makes the
+                  ;; kubelet serve the PREVIOUS run's logs (useful
+                  ;; immediately after a crash).
+                  ,@(when (bound-and-true-p k8s--log-previous)
+                      '(("previous" . "true")))))
          (buf (current-buffer)))
     (let ((inhibit-read-only t)) (erase-buffer))
     (setq k8s--log-process
@@ -539,27 +545,40 @@ own namespace."
        conn marked 'marked
        (format "%d-pods" (length marked))))))
 
-(defun k8s--open-pod-log-buffer (conn ns pod-name container)
+(defun k8s--open-pod-log-buffer (conn ns pod-name container &optional previous)
   "Open a streaming-logs buffer for NS/POD-NAME[CONTAINER] via CONN.
 Shared entry point for the pods view's `l' and the CronJobs view's
-last-run-logs action."
+last-run-logs action.
+
+With PREVIOUS non-nil, hit the kubelet's `?previous=true' so the
+stream shows the container's PREVIOUS run (useful right after a
+crash); the buffer name gets a `:prev' suffix so it doesn't collide
+with the current-run buffer."
   (let ((buf (get-buffer-create
-              (format "*k8s:logs:%s/%s[%s]*" ns pod-name container))))
+              (format "*k8s:logs%s:%s/%s[%s]*"
+                      (if previous ":prev" "")
+                      ns pod-name container))))
     (with-current-buffer buf
       (k8s-log-mode)
       (setq k8s--log-conn conn
             k8s--log-ns ns
             k8s--log-pod pod-name
             k8s--log-container container)
+      (setq-local k8s--log-previous previous)
       (k8s--log-start))
     (pop-to-buffer buf)
-    (message "Streaming %s/%s[%s] — g=restart, q=quit" ns pod-name container)))
+    (message "Streaming %s/%s[%s]%s — g=restart, q=quit"
+             ns pod-name container
+             (if previous "  (previous run)" ""))))
 
-(defun k8s-pod-view-logs ()
+(defun k8s-pod-view-logs (&optional previous)
   "Show tailing logs for the pod at point.
 With point on a container subsection (inside an expanded pod), logs
-that container directly; on the pod line, picks a container."
-  (interactive)
+that container directly; on the pod line, picks a container.
+
+With a prefix argument (`C-u l'), tail the PREVIOUS container run
+\(`?previous=true' on the kubelet) — useful right after a crash."
+  (interactive "P")
   (let* ((target (k8s--pod+container-at-point))
          (pod (car target))
          (preselected (cdr target))
@@ -571,7 +590,7 @@ that container directly; on the pod line, picks a container."
                              (k8s--read-pod-container "Logs for" ns name
                                                       pod containers))))
          (conn (k8s--ensure-connection)))
-    (k8s--open-pod-log-buffer conn ns name container)))
+    (k8s--open-pod-log-buffer conn ns name container previous)))
 
 (defun k8s-pod-exec-at-point ()
   "Open an interactive TTY exec into the pod at point.

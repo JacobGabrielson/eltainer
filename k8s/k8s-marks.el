@@ -228,6 +228,13 @@ no load-order surprise.")
        ("F"     eltainer-filter-dispatch)
        ("T"     k8s-xray-at-point)
        ("Y"     k8s-edit-at-point)
+       ;; Write-side actions (k8s-actions).  Each one type-checks the
+       ;; section under point and errors out cleanly elsewhere.
+       ("S"     k8s-scale-at-point)
+       ("R"     k8s-rollout-restart-at-point)
+       ("K"     k8s-force-kill-pod-at-point)
+       ("c"     k8s-cordon-toggle-at-point)
+       ("D"     k8s-drain-at-point)
        ("b"     eltainer-switch-kubeconfig)
        ("?"     k8s-dispatch)
        ("g"     revert-buffer)

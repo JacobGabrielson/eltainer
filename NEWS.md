@@ -22,6 +22,22 @@ The per-CRD instance buffer's header now includes the active
 version (`Certificate.cert-manager.io/v1`) so you always know
 exactly which API you're hitting.
 
+### Workload + node write actions
+
+| Key | Action | Targets |
+|-----|--------|---------|
+| `S` | Scale (prompts for replicas; numeric prefix arg sets directly) | Deployment / StatefulSet / ReplicaSet |
+| `R` | Rollout-restart (patches `kubectl.kubernetes.io/restartedAt` annotation on the pod template) | Deployment / StatefulSet / DaemonSet |
+| `K` | Force-kill the Pod (controller will recreate) | Pod |
+| `c` | Toggle cordon (`spec.unschedulable`) | Node |
+| `D` | Drain — cordon + evict every non-DaemonSet, non-mirror pod | Node |
+| `C-u l` | Tail the *previous* container run (`?previous=true`) — useful right after a crash | Pod |
+
+All actions confirm before sending; node drain reports per-pod
+success / failure / kept-as-DaemonSet counts.  Bound in
+`k8s-common-map` so every view inherits them; each one type-checks
+the section at point and errors cleanly elsewhere.
+
 ### Edit any resource's YAML in place (`Y`)
 
 `Y` on a resource row in any k8s view opens that resource's YAML
