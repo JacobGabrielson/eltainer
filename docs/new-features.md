@@ -50,6 +50,20 @@ when a filter is active.
 
 ---
 
+## Traffic through a load balancer  *(status: proposal — see [docs/lb-traffic-plan.md](lb-traffic-plan.md))*
+
+`IN/s` and `OUT/s` columns in the Services view; `M` on a Service
+opens a metrics buffer with sparklines + per-port + backing-pod
+breakdown.  Same shape for Ingresses, measured at the ingress
+controller's pods.  Uses the kubelet Summary API we already poll
+for per-pod sparklines; optional Prometheus fast-path when
+available.  Pod network counters carry the signal for every K8s
+load-balancer shape (ClusterIP / NodePort / LoadBalancer /
+headless) — no LB-device-specific scraping needed.
+
+See the linked plan for module layout, rate math, and the
+ingress-controller resolution.
+
 ## Helm chart support  *(status: v1 shipped — see [docs/helm-plan.md](helm-plan.md))*
 
 v1 (read-only) is live:
