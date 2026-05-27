@@ -219,6 +219,9 @@ docker/
   docker-stacks.el       Read-only Compose-stack view (group by project label)
   docker-pulse.el        Single-host docker pulse dashboard
   docker-create.el       Create + start a container from a JSON template (`+')
+  docker-volumes.el      Volume browser + delete-with-confirm (`V')
+  docker-build.el        Build an image; in-process recursive USTAR + /build
+  docker-push.el         Push an image; `X-Registry-Auth' via docker-auth
   docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 

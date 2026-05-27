@@ -33,8 +33,10 @@
       ("S" "Stacks"     docker-stacks)
       ("p" "Pulse"      docker-pulse)
       ("I" "Images"     docker-images)
+      ("V" "Volumes"    docker-volumes)
       ("N" "Networks"   docker-networks)
-      ("u" "Pull"       docker-pull-image)))
+      ("u" "Pull"       docker-pull-image)
+      ("B" "Build"      docker-build)))
     ("Kubernetes" .
      (("P" "Pulse"         k8s-pulse)
       ("E" "Events"        k8s-events)

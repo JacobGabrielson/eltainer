@@ -59,7 +59,7 @@ first; mutating ops as a v2 with an explicit no-CLI exception.
 
 ---
 
-## Image build from a Dockerfile in a buffer  *(idea)*
+## Image build from a Dockerfile in a buffer  *(shipped 2026-05-27)*
 
 Open a buffer over a Dockerfile (`C-x C-f Dockerfile`), then
 `M-x docker-build`: posts the directory's tar to `POST /build`
@@ -77,7 +77,7 @@ Edge cases worth surfacing:
 
 ---
 
-## Image push to a registry  *(idea)*
+## Image push to a registry  *(shipped 2026-05-27)*
 
 We already have `docker-pull-image' (`u' on the dashboard's
 docker group).  Push is the mirror: POST `/images/<name>/push`
@@ -112,7 +112,7 @@ freely.  Latter is faster to ship.
 
 ---
 
-## Volume browser + usage stats  *(idea)*
+## Volume browser + usage stats  *(shipped 2026-05-27)*
 
 A view of every named volume on the daemon: NAME / DRIVER /
 MOUNTPOINT / SIZE / CREATED / IN-USE-BY (containers referencing

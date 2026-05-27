@@ -13,6 +13,39 @@ the in-flight backlog.
 
 ## 2026-05-27
 
+### Docker: Volume browser (`V` from dashboard)
+
+`*docker:volumes*` lists every named volume on the daemon with
+NAME / DRIVER / SIZE / USED BY / CREATED, plus the mountpoint
+on the second line.  Size comes from `/system/df`; the "used
+by" column lists which containers mount the volume (resolved
+per-container).  `d` deletes (with confirm; engine refuses if
+in use and surfaces the error).
+
+### Docker: Image build (`B` from dashboard, `M-x docker-build`)
+
+`M-x docker-build' prompts for a context directory + optional
+`:tag', tars the context in pure Elisp (recursive walk, USTAR
+format reusing the docker-fs archive primitives), POSTs to
+`/build' with `Content-Type: application/x-tar', and streams
+the daemon's NDJSON progress into `*docker:build*'.  Real
+step-by-step rendering (`Step 1/4: FROM …', `Successfully
+tagged …'), errors in the error face.
+
+Coarse `.dockerignore' substitute via `docker-build-skip-rx'
+(skips `.git', `.elc', backup files, etc.).  Full
+`.dockerignore' parsing + BuildKit are queued for v2.
+
+### Docker: Image push (`P` on the images view)
+
+Mirror of `docker-pull-image' for the reverse direction.
+`POST /images/<name>/push?tag=<tag>' with `X-Registry-Auth'
+resolved from `~/.docker/config.json' (same path `docker-auth.el'
+already drives for pull).  Streams progress into
+`*docker:push:NAME*'; reuses the pull view's renderer.
+`M-x docker-image-push' as the cluster-wide entry; `P' on a
+docker-images row pushes whatever's at point.
+
 ### Docker: Container-create form (`+` on the containers view)
 
 `+` on a docker containers row (or `M-x docker-create`) pops
