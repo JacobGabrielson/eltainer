@@ -24,7 +24,8 @@
   status            ; string, status line (e.g. "Up 2 hours")
   state             ; string, state (running, exited, etc.)
   name              ; string, container name
-  size)             ; string, size or nil
+  size              ; string, size or nil
+  labels)           ; alist of (KEY . VALUE) — `Labels' field from /containers/json
 
 (cl-defstruct (docker-container-detail (:constructor docker-container-detail--new) (:copier nil))
   "Detailed Docker container info (from docker inspect)."
@@ -95,7 +96,8 @@ only — see `docker-list-containers--label-filter-json')."
                 :state (alist-get 'State j)
                 :name (docker--strip-leading-slash
                        (car (alist-get 'Names j)))
-                :size nil))
+                :size nil
+                :labels (alist-get 'Labels j)))
              data))))
 
 ;;; ---------------------------------------------------------------------------

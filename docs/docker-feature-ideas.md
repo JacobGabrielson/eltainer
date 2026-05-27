@@ -20,7 +20,7 @@ has a `docs/docker-<feature>-plan.md`.  Promote to
 
 ---
 
-## Compose-stack management  *(idea — biggest single addition)*
+## Compose-stack management  *(v1 read-only shipped 2026-05-27; v2 writable still idea)*
 
 A first-class view of "stacks" (a stack = a `docker-compose.yml`
 file declaring a set of services + networks + volumes that share
@@ -158,7 +158,7 @@ by images / containers / volumes / build cache, with a one-key
 
 ---
 
-## Single-host multi-stack dashboard  *(idea)*
+## Single-host multi-stack dashboard  *(shipped 2026-05-27)*
 
 A "pulse" for docker (analogous to the k8s cluster-pulse already
 shipped).  Aggregate: total containers (running/stopped),

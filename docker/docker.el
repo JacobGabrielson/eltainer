@@ -707,6 +707,8 @@ Tries `getent hosts' → `nslookup' → dump of `/etc/resolv.conf' +
 (keymap-set docker-containers-mode-map "e" #'docker-exec-at-point)
 (keymap-set docker-containers-mode-map "M" #'docker-container-metrics-at-point)
 (autoload 'docker-dired-browse-at-point "docker-dired" nil t)
+(autoload 'docker-stacks "docker-stacks" nil t)
+(autoload 'docker-pulse "docker-pulse" nil t)
 (keymap-set docker-containers-mode-map "f" #'docker-dired-browse-at-point)
 (keymap-set docker-containers-mode-map "D" #'docker-container-dns-lookup-at-point)
 

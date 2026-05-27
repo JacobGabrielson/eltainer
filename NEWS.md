@@ -13,6 +13,37 @@ the in-flight backlog.
 
 ## 2026-05-27
 
+### Docker: Compose-stack view (`S` from dashboard)
+
+`*docker:stacks*` lists every Compose-managed stack on the
+daemon, grouped by the `com.docker.compose.project` label and
+expanded by service.  Each row shows running/total replica
+counts, container state, image, and bound ports; the path to
+`docker-compose.yml` appears under each stack heading.  Stacks
+fully up render in green, partially up in yellow, all-down in
+red.
+
+Read-only in v1.  Mutating ops (up/down/restart) need the
+`compose` plugin's CLI semantics (volume creation, network
+setup, dependency ordering) — see `docs/docker-feature-ideas.md`
+for v2 thinking.
+
+### Docker: Single-host pulse (`p` from dashboard)
+
+`*docker:pulse*` — mirror of the k8s cluster-pulse, scoped to
+the local docker daemon.  Sections:
+
+- **Containers** by state, with relative bars.
+- **Stacks** summary (total / fully-up / partial).
+- **Disk usage** from `/system/df`: images / containers /
+  volumes / build cache.
+- **Top 5 CPU** and **Top 5 memory** consumers among running
+  containers (CPU% via single-call delta against `precpu_stats`).
+- Footer: engine version, kernel, CPU count, host RAM.
+
+Self-refreshes every `docker-pulse-refresh-interval` (default 30
+s); `g` re-polls; `q` quits.
+
 ### CRDs view shows served versions
 
 The CRDs listing grew a VERSIONS column listing every served

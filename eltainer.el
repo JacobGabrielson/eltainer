@@ -30,6 +30,8 @@
 (defconst eltainer-views
   '(("Docker" .
      (("c" "Containers" docker-containers)
+      ("S" "Stacks"     docker-stacks)
+      ("p" "Pulse"      docker-pulse)
       ("I" "Images"     docker-images)
       ("N" "Networks"   docker-networks)
       ("u" "Pull"       docker-pull-image)))

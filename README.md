@@ -216,6 +216,8 @@ docker/
   docker-fs.el           Filesystem listing via docker-exec; cat via the
                          archive API (works on distroless / scratch)
   docker-dired.el        Dired-mode buffer over a container's filesystem
+  docker-stacks.el       Read-only Compose-stack view (group by project label)
+  docker-pulse.el        Single-host docker pulse dashboard
   docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 
