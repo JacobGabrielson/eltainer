@@ -59,7 +59,12 @@
       ("v" "PVCs"            k8s-persistentvolumeclaims)
       ("V" "PVs"             k8s-persistentvolumes)
       ("C" "StorageClasses"  k8s-storageclasses)
-      ("W" "NetworkPolicies" k8s-networkpolicies))))
+      ("W" "NetworkPolicies" k8s-networkpolicies)
+      ("a" "ServiceAccounts" k8s-serviceaccounts)
+      ("r" "Roles"           k8s-roles)
+      ("e" "RoleBindings"    k8s-rolebindings)
+      ("X" "ClusterRoles"    k8s-clusterroles)
+      ("Y" "ClusterRoleBindings" k8s-clusterrolebindings))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).
 `defconst' not `defvar' so editing this list and running
 `eltainer-reload' actually picks up the change — `defvar' is a
@@ -496,6 +501,12 @@ callers."
                      (format ", swept %d orphan timer%s"
                              swept (if (= 1 swept) "" "s"))
                    "")))))))
+
+;; Install the k8s-bookmarks `bookmark-make-record-function' hook
+;; for every k8s view buffer.  Loaded here so the hook is in place
+;; the first time the user opens a view; safe to require lazily
+;; because the module only references k8s-* commands via autoload.
+(require 'k8s-bookmarks)
 
 (provide 'eltainer)
 ;;; eltainer.el ends here

@@ -22,6 +22,52 @@ The per-CRD instance buffer's header now includes the active
 version (`Certificate.cert-manager.io/v1`) so you always know
 exactly which API you're hitting.
 
+### Emacs-bookmark integration for K8s rows
+
+`bookmark.el` now knows how to record-and-jump K8s resource rows.
+Stand on any row in any k8s view, hit `C-x r m`, name it — later
+`C-x r b` re-opens the right view, switches kubeconfig context if
+needed, sets the namespace filter, and scrolls to that row.
+
+Works across clusters: each record carries `(context, kubeconfig,
+kind, ns, name)`, and the jump invokes `eltainer--apply-context-
+switch` when the active context doesn't match.
+
+### Cluster events view (`E` from dashboard / `?`)
+
+`*k8s:events*` lists `/api/v1/events` cluster-wide, newest first,
+filtered to the last `k8s-events-window-minutes` (default 60 min;
+0 disables the cutoff).  Warning rows render in the error face,
+Normal in success; the involvedObject's kind/namespace/name is the
+right-hand column.  TAB on a row hides its message body.
+Composes with namespace + label + name-regex filters.
+
+### RBAC: ServiceAccounts, Roles, RoleBindings, ClusterRoles, ClusterRoleBindings
+
+Five new read-only RBAC views:
+
+| Key (dashboard) | View                  | Scope       |
+|-----------------|-----------------------|-------------|
+| `a`             | ServiceAccounts        | namespaced |
+| `r`             | Roles                  | namespaced |
+| `e`             | RoleBindings           | namespaced |
+| `X`             | ClusterRoles           | cluster    |
+| `Y`             | ClusterRoleBindings    | cluster    |
+
+RoleBindings / ClusterRoleBindings summarise their `subjects`
+compactly: `sa:default/foo + user:alice + 2 more`.  ClusterRoles
+mark aggregated vs. direct (whether they synthesise their rules
+from labelled child roles).
+
+### Port-forward (experimental, `P` on a Pod row)
+
+WebSocket-based port-forward via the API server's
+`/pods/.../portforward` endpoint — no `kubectl` shell-out.
+Implementation present; live verification against a running pod
+is still pending an interactive smoke test (batch-mode emacs is
+the wrong driver).  Use at your own risk; expect debugging.
+`*k8s:port-forwards*` lists active forwards; `k` kills.
+
 ### Resource coverage: PV / PVC / StorageClass / NetworkPolicy / HPA / PDB
 
 Six new read-only views land in the dashboard and the `?`

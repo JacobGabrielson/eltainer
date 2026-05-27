@@ -997,6 +997,12 @@ That is: a section whose value is a resource alist (carries
    ["Scaling"
     ("a" "HPAs"            k8s-horizontalpodautoscalers)
     ("b" "PDBs"            k8s-poddisruptionbudgets)]
+   ["RBAC"
+    ("A" "ServiceAccounts"     k8s-serviceaccounts)
+    ("Q" "Roles"               k8s-roles)
+    ("Y" "RoleBindings"        k8s-rolebindings)
+    ("X" "ClusterRoles"        k8s-clusterroles)
+    ("Z" "ClusterRoleBindings" k8s-clusterrolebindings)]
    ["Cluster"
     ("P" "Pulse"        k8s-pulse)
     ("E" "Events"       k8s-events)
@@ -1921,6 +1927,152 @@ agent-sandbox controller isn't running)."
   (format "  %-36s %-50s %-14s %s\n"
           "NAME" "POD-SELECTOR" "TYPES" "AGE")
   #'k8s--insert-networkpolicy-line)
+
+;;; ---------------------------------------------------------------------------
+;;; RBAC views
+
+(defun k8s--rbac--subject-summary (subjects)
+  "Compactly summarise a list of RBAC subjects.
+Example output: `user:alice + sa:default/foo + 2 more'."
+  (let* ((subs (append (or subjects []) nil))
+         (parts (mapcar
+                  (lambda (s)
+                    (let ((kind (cdr (assq 'kind s)))
+                          (name (cdr (assq 'name s)))
+                          (ns   (cdr (assq 'namespace s))))
+                      (cond
+                       ((equal kind "ServiceAccount")
+                        (format "sa:%s/%s" (or ns "?") name))
+                       ((equal kind "User")      (format "user:%s" name))
+                       ((equal kind "Group")     (format "group:%s" name))
+                       (t (format "%s:%s" (or kind "?") name)))))
+                  subs))
+         (n (length parts)))
+    (cond
+     ((zerop n) "")
+     ((= n 1) (car parts))
+     ((<= n 2) (mapconcat #'identity parts " + "))
+     (t (format "%s + %d more" (car parts) (1- n))))))
+
+(defun k8s--rbac--role-ref (ref)
+  "Format a `roleRef' alist for the table."
+  (format "%s/%s"
+          (or (cdr (assq 'kind ref)) "?")
+          (or (cdr (assq 'name ref)) "?")))
+
+;;; --- ServiceAccounts ---
+
+(defun k8s--insert-serviceaccount-line (sa)
+  (let* ((meta (cdr (assq 'metadata sa)))
+         (name (cdr (assq 'name meta)))
+         (secrets (length (append (or (cdr (assq 'secrets sa)) []) nil)))
+         (pulls (length (append
+                          (or (cdr (assq 'imagePullSecrets sa)) []) nil)))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (serviceaccount sa t)
+      (magit-insert-heading
+        (format "  %-40s %-8d %-12d %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                secrets
+                pulls
+                age)))))
+
+(k8s--define-view serviceaccounts
+  "Major mode for ServiceAccounts."
+  #'k8s-list-serviceaccounts
+  (format "  %-40s %-8s %-12s %s\n"
+          "NAME" "SECRETS" "PULL-SECRETS" "AGE")
+  #'k8s--insert-serviceaccount-line)
+
+;;; --- Roles ---
+
+(defun k8s--insert-role-line (role)
+  (let* ((meta (cdr (assq 'metadata role)))
+         (name (cdr (assq 'name meta)))
+         (rules (length (append (or (cdr (assq 'rules role)) []) nil)))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (role role t)
+      (magit-insert-heading
+        (format "  %-46s %-8d %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                rules
+                age)))))
+
+(k8s--define-view roles
+  "Major mode for Roles (namespaced)."
+  #'k8s-list-roles
+  (format "  %-46s %-8s %s\n" "NAME" "RULES" "AGE")
+  #'k8s--insert-role-line)
+
+;;; --- RoleBindings ---
+
+(defun k8s--insert-rolebinding-line (rb)
+  (let* ((meta (cdr (assq 'metadata rb)))
+         (name (cdr (assq 'name meta)))
+         (role-ref (k8s--rbac--role-ref (cdr (assq 'roleRef rb))))
+         (subjects (k8s--rbac--subject-summary (cdr (assq 'subjects rb))))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (rolebinding rb t)
+      (magit-insert-heading
+        (format "  %-40s %-32s %-40s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize role-ref 'font-lock-face 'eltainer-resource-secondary)
+                (propertize subjects 'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view rolebindings
+  "Major mode for RoleBindings (namespaced)."
+  #'k8s-list-rolebindings
+  (format "  %-40s %-32s %-40s %s\n"
+          "NAME" "ROLE" "SUBJECTS" "AGE")
+  #'k8s--insert-rolebinding-line)
+
+;;; --- ClusterRoles ---
+
+(defun k8s--insert-clusterrole-line (cr)
+  (let* ((meta (cdr (assq 'metadata cr)))
+         (name (cdr (assq 'name meta)))
+         (rules (length (append (or (cdr (assq 'rules cr)) []) nil)))
+         (aggr (cdr (assq 'aggregationRule cr)))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (clusterrole cr t)
+      (magit-insert-heading
+        (format "  %-50s %-8d %-12s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                rules
+                (propertize (if aggr "aggregated" "direct")
+                            'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view clusterroles
+  "Major mode for ClusterRoles (cluster-scoped)."
+  #'k8s-list-clusterroles
+  (format "  %-50s %-8s %-12s %s\n"
+          "NAME" "RULES" "MODE" "AGE")
+  #'k8s--insert-clusterrole-line)
+
+;;; --- ClusterRoleBindings ---
+
+(defun k8s--insert-clusterrolebinding-line (crb)
+  (let* ((meta (cdr (assq 'metadata crb)))
+         (name (cdr (assq 'name meta)))
+         (role-ref (k8s--rbac--role-ref (cdr (assq 'roleRef crb))))
+         (subjects (k8s--rbac--subject-summary (cdr (assq 'subjects crb))))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (clusterrolebinding crb t)
+      (magit-insert-heading
+        (format "  %-50s %-32s %-40s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize role-ref 'font-lock-face 'eltainer-resource-secondary)
+                (propertize subjects 'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view clusterrolebindings
+  "Major mode for ClusterRoleBindings (cluster-scoped)."
+  #'k8s-list-clusterrolebindings
+  (format "  %-50s %-32s %-40s %s\n"
+          "NAME" "ROLE" "SUBJECTS" "AGE")
+  #'k8s--insert-clusterrolebinding-line)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Nodes (cluster-scoped — name/roles/status/version + live perf gauges)

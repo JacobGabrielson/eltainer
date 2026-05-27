@@ -41,14 +41,12 @@ afternoon.
 - **ResourceQuota / LimitRange views** — easy to render, often
   needed when a cluster "mysteriously" rejects creates.  *(idea)*
 - **RBAC views** — Roles, RoleBindings, ClusterRoles,
-  ClusterRoleBindings, ServiceAccounts.  Five views; share a
-  rule-rendering helper.  *(idea)*
+  ClusterRoleBindings, ServiceAccounts.  Subjects + role-refs
+  rendered compactly.  *(shipped 2026-05-27)*
 - **Endpoints view** — what backs each Service.  RET on a row
   should jump to the pod for ip-by-pod resolution.  *(idea)*
-- **Events view** — the live `/api/v1/events?watch=true` stream
-  sorted by `lastTimestamp` descending; Warning rows in
-  `eltainer-status-error` face.  Watch handling is already in
-  the toolbox.  *(idea)*
+- **Events view** — Warning rows in error face, Normal in success;
+  windowed to last hour by default.  *(shipped 2026-05-27)*
 
 ## Generic CRD support (medium)
 
@@ -94,11 +92,8 @@ container-dired write ops.  The mainstream UIs offer:
   `completing-read` (vertico-friendly) listing every resource in
   the active namespace + the cluster-scoped ones.  Selecting one
   opens the right view scrolled to that row.  *(idea)*
-- **Bookmarks** — wire each resource row's `section-value` into
-  `bookmark-make-record-function` so `M-x bookmark-set` saves a
-  cross-cluster pointer to "this pod" — `bookmark-jump` later
-  reopens the buffer and scrolls there.  Standard Emacs UX, zero
-  new vocabulary.  *(idea)*
+- **Bookmarks** — cross-cluster bookmark records via
+  `bookmark.el`'s standard hooks.  *(shipped 2026-05-27)*
 - **Owner navigation** — on a Pod row, `O` (or RET on a synthetic
   "Owned by:" line) jumps to its owner (ReplicaSet → Deployment,
   Job → CronJob, etc.).  Extends `k8s-jump-target`.  *(idea)*
@@ -116,12 +111,9 @@ container-dired write ops.  The mainstream UIs offer:
 
 ## Observability (medium)
 
-- **Port-forward manager** — `P` on a Pod / Service row opens a
-  port-forward via the API server's `/pods/.../portforward`
-  SPDY/WebSocket endpoint (no CLI shell-out).
-  `*k8s:port-forwards*` lists actives; `k` kills.  Substantial:
-  the SPDY framing isn't trivial but it's a standard protocol.
-  *(idea — bigger ticket)*
+- **Port-forward manager** — `P` on a Pod row.
+  *(experimental, shipped 2026-05-27 — wire protocol implemented,
+  live verification still pending)*
 - **Cluster sanity scan** — `*k8s:scan*` runs a battery of
   read-only checks: pods without `resources.limits`, pods without
   liveness/readiness probes, missing pdb on multi-replica

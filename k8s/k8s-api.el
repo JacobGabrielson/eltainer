@@ -246,7 +246,22 @@ decoded kubelet Summary alist for NODE, or nil on failure."
      "/apis/storage.k8s.io/v1/storageclasses") ; cluster-scoped
     (networkpolicies
      "/apis/networking.k8s.io/v1/networkpolicies"
-     "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies"))
+     "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies")
+    (serviceaccounts
+     "/api/v1/serviceaccounts"
+     "/api/v1/namespaces/%s/serviceaccounts")
+    (roles
+     "/apis/rbac.authorization.k8s.io/v1/roles"
+     "/apis/rbac.authorization.k8s.io/v1/namespaces/%s/roles")
+    (rolebindings
+     "/apis/rbac.authorization.k8s.io/v1/rolebindings"
+     "/apis/rbac.authorization.k8s.io/v1/namespaces/%s/rolebindings")
+    (clusterroles
+     "/apis/rbac.authorization.k8s.io/v1/clusterroles"
+     "/apis/rbac.authorization.k8s.io/v1/clusterroles") ; cluster-scoped
+    (clusterrolebindings
+     "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"
+     "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"))
   "Alist mapping resource types (plural) to (ALL-PATH NAMESPACED-PATH-TEMPLATE).
 Keys are plural to match `k8s--define-view's macro name convention.")
 
@@ -302,7 +317,12 @@ the response."
     (persistentvolume . "/api/v1/persistentvolumes/%2$s")
     (persistentvolumeclaim . "/api/v1/namespaces/%s/persistentvolumeclaims/%s")
     (storageclass . "/apis/storage.k8s.io/v1/storageclasses/%2$s")
-    (networkpolicy . "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s"))
+    (networkpolicy . "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s")
+    (serviceaccount . "/api/v1/namespaces/%s/serviceaccounts/%s")
+    (role . "/apis/rbac.authorization.k8s.io/v1/namespaces/%s/roles/%s")
+    (rolebinding . "/apis/rbac.authorization.k8s.io/v1/namespaces/%s/rolebindings/%s")
+    (clusterrole . "/apis/rbac.authorization.k8s.io/v1/clusterroles/%2$s")
+    (clusterrolebinding . "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings/%2$s"))
   "Alist mapping section types to API path templates (namespace, name).")
 
 (defun k8s-delete-resource (conn type namespace name)
@@ -529,6 +549,37 @@ not every kubeconfig has, and the kubelet may be unreachable."
 (defun k8s-list-storageclasses (conn &optional _namespace)
   "List StorageClasses via CONN (cluster-scoped)."
   (cdr (assq 'items (k8s-get conn "/apis/storage.k8s.io/v1/storageclasses"))))
+
+(defun k8s-list-serviceaccounts (conn &optional namespace)
+  "List ServiceAccounts via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/api/v1/namespaces/%s/serviceaccounts" namespace)
+                "/api/v1/serviceaccounts")))
+    (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-roles (conn &optional namespace)
+  "List Roles via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/apis/rbac.authorization.k8s.io/v1/namespaces/%s/roles" namespace)
+                "/apis/rbac.authorization.k8s.io/v1/roles")))
+    (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-rolebindings (conn &optional namespace)
+  "List RoleBindings via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/apis/rbac.authorization.k8s.io/v1/namespaces/%s/rolebindings" namespace)
+                "/apis/rbac.authorization.k8s.io/v1/rolebindings")))
+    (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-clusterroles (conn &optional _namespace)
+  "List ClusterRoles via CONN (cluster-scoped)."
+  (cdr (assq 'items
+             (k8s-get conn "/apis/rbac.authorization.k8s.io/v1/clusterroles"))))
+
+(defun k8s-list-clusterrolebindings (conn &optional _namespace)
+  "List ClusterRoleBindings via CONN (cluster-scoped)."
+  (cdr (assq 'items
+             (k8s-get conn "/apis/rbac.authorization.k8s.io/v1/clusterrolebindings"))))
 
 (defun k8s-list-networkpolicies (conn &optional namespace)
   "List NetworkPolicies via CONN, optionally in NAMESPACE."
