@@ -11,6 +11,32 @@ the in-flight backlog.
 
 ---
 
+## 2026-05-27
+
+### Services view: per-Service IN/s + OUT/s traffic columns
+
+The Services view grows two new columns showing aggregate ingress
+/ egress bytes-per-second for every Service.  For each Service we
+resolve `.spec.selector` to its backing pods, sum their kubelet-
+Summary `network.{rxBytes, txBytes}` counters, and rate-difference
+against the previous poll (default every 30 s, controlled by
+`k8s-metrics-refresh-interval`).  Works uniformly for ClusterIP,
+NodePort, LoadBalancer, and headless Services — every shape ends
+with the bytes hitting backing pods.
+
+`M` on a Service row opens a focused `*k8s:traffic:NS/SVC*` buffer
+with sparklines for the aggregate IN/s + OUT/s plus a per-backing-
+pod breakdown.  Polls on its own timer; `g` re-polls; `q` quits.
+
+The new columns can be turned off with
+`(setq k8s-services-show-traffic nil)` if you'd rather have a
+narrower row.  Selectorless / `ExternalName` Services render `—`.
+
+Limitation: pod network counters can't attribute bytes to a
+specific destination Service, so a pod selected by multiple
+Services has its rx/tx split across them — the same limitation
+`kubectl top` and most cloud-monitoring panels have.
+
 ## 2026-05-26
 
 ### Helm RESOURCES rows are jump-targets

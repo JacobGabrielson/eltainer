@@ -1,6 +1,6 @@
 # Plan: ingress / egress traffic per load balancer
 
-Status: **proposal** — review before coding.
+Status: **v1 shipped** (Services columns + per-Service `M` buffer).  Ingresses analog and the Prometheus fast-path still pending.
 
 ## Goal
 

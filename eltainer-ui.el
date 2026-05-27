@@ -132,6 +132,18 @@ Convenience for the common pattern of `(propertize (age-string …)
   (propertize (eltainer-ui-age-string timestamp)
               'font-lock-face (eltainer-ui-age-face timestamp)))
 
+(defun eltainer-ui-bytes-rate (n)
+  "Format N bytes/second with a decimal-unit suffix (KB/s, MB/s, ...).
+Decimal units match what network tools (`iftop`, `nload`, cloud
+metrics dashboards) consistently use for throughput — even when
+they use binary units for storage.  nil → \"?\"."
+  (cond
+   ((not (numberp n)) "?")
+   ((< n 1000)              (format "%dB/s"   (truncate n)))
+   ((< n 1000000)           (format "%.1fKB/s" (/ n 1000.0)))
+   ((< n 1000000000)        (format "%.1fMB/s" (/ n 1000000.0)))
+   (t                       (format "%.2fGB/s" (/ n 1000000000.0)))))
+
 (defun eltainer-ui-truncate (str width)
   "Truncate STR to WIDTH chars; appends an ellipsis if it had to."
   (if (and (stringp str) (> (length str) width))

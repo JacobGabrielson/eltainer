@@ -118,6 +118,7 @@ metrics buffer for the container.
 | `d` | Delete resource (with confirmation) |
 | `TAB` | Expand / collapse section |
 | `RET` on an Ingress backend row | Jump to the referenced Service in the services view |
+| In the services view: `IN/s` + `OUT/s` columns | Aggregate of each Service's backing pods' network counters (kubelet Summary); `M` opens a per-Service sparkline buffer |
 
 `?` is **context-aware** — the first group of the menu reflects
 whatever the cursor is on (a pod, a container, or another resource),
@@ -228,6 +229,7 @@ k8s/
   k8s-fs.el              Pod-fs backend (list / stat / cat over k8s-exec)
   k8s-dired.el           Dired-mode buffer over a pod container's filesystem
   k8s-helm.el            Read-only Helm 3 view (decodes release secrets directly)
+  k8s-traffic.el         Per-Service ingress/egress aggregation + M-buffer
   k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```

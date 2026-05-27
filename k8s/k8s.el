@@ -13,6 +13,7 @@
 (require 'eltainer-ui)
 (require 'eltainer-gauge)
 (require 'eltainer-filter)
+(require 'k8s-traffic)
 (require 'k8s-config)
 (require 'k8s-api)
 (require 'k8s-watch)
@@ -1373,24 +1374,40 @@ daemonsets, jobs and services."
          (append ports nil) ", ")
       "")))
 
+(defvar-local k8s-services--traffic-history nil
+  "Per-Services-buffer history hash for `IN/s' / `OUT/s' sparklines.
+Populated by `k8s-services--traffic-tick'; consulted by
+`k8s--insert-service-line' when `k8s-services-show-traffic' is non-nil.")
+
 (defun k8s--insert-service-line (svc)
-  "Insert a service summary line."
+  "Insert a service summary line.
+With `k8s-services-show-traffic' set (default `t'), appends
+`IN/s' and `OUT/s' columns from `k8s-services--traffic-history'."
   (let* ((name (k8s--resource-name svc))
          (spec (cdr (assq 'spec svc)))
          (type (or (cdr (assq 'type spec)) "ClusterIP"))
          (cluster-ip (or (cdr (assq 'clusterIP spec)) ""))
          (ports (k8s--service-ports-string svc))
-         (age (k8s--age-string (k8s--resource-creation-time svc))))
+         (age (k8s--age-string (k8s--resource-creation-time svc)))
+         (traffic-cells
+          (and (bound-and-true-p k8s-services-show-traffic)
+               k8s-services--traffic-history
+               (concat
+                (k8s-traffic-render-columns
+                 name k8s-services--traffic-history)
+                " "))))
     (magit-insert-section (service svc t)
       (magit-insert-heading
-        (format "  %-35s %-15s %-18s %-6s %s\n"
-                (propertize name 'font-lock-face 'k8s-resource-name)
-                (propertize type 'font-lock-face
-                            (k8s--phase-face (if (string= type "ClusterIP")
-                                                 "Active" type)))
-                cluster-ip
-                age
-                (propertize ports 'font-lock-face 'k8s-dim)))
+        (concat
+         (format "  %-35s %-15s %-18s %-6s "
+                 (propertize name 'font-lock-face 'k8s-resource-name)
+                 (propertize type 'font-lock-face
+                             (k8s--phase-face (if (string= type "ClusterIP")
+                                                  "Active" type)))
+                 cluster-ip
+                 age)
+         (or traffic-cells "")
+         (format "%s\n" (propertize ports 'font-lock-face 'k8s-dim))))
       (let ((selector (cdr (assq 'selector spec)))
             (external-name (cdr (assq 'externalName spec))))
         (k8s--insert-selector selector "    ")
@@ -1400,13 +1417,95 @@ daemonsets, jobs and services."
         (k8s--insert-labels (k8s--resource-labels svc) "    ")
         (insert "\n")))))
 
+(defun k8s--services-column-header ()
+  "Return the column header for the Services view, with or without
+traffic columns depending on `k8s-services-show-traffic'."
+  (if k8s-services-show-traffic
+      (format "  %-35s %-15s %-18s %-6s %10s %10s %s\n"
+              "NAME" "TYPE" "CLUSTER-IP" "AGE" "IN/s" "OUT/s" "PORTS")
+    (format "  %-35s %-15s %-18s %-6s %s\n"
+            "NAME" "TYPE" "CLUSTER-IP" "AGE" "PORTS")))
+
 (k8s--define-view services
   "Major mode for viewing Kubernetes services."
   #'k8s-list-services
-  (format "  %-35s %-15s %-18s %-6s %s\n" "NAME" "TYPE" "CLUSTER-IP" "AGE" "PORTS")
+  (k8s--services-column-header)
   #'k8s--insert-service-line)
 
 (keymap-set k8s-services-mode-map "l" #'k8s--multilog-at-point)
+(keymap-set k8s-services-mode-map "M" #'k8s-service-traffic-at-point)
+
+(defun k8s-service-traffic-at-point ()
+  "Open the per-Service traffic dashboard for the service at point."
+  (interactive)
+  (let* ((sec (magit-current-section))
+         (svc (and sec (eq (oref sec type) 'service) (oref sec value))))
+    (unless svc (user-error "Not on a Service row"))
+    (k8s-traffic-buffer
+     (k8s--ensure-connection)
+     (k8s--resource-namespace svc)
+     (k8s--resource-name svc))))
+
+;;; --- Background traffic poll for the Services view ------------------------
+
+(defvar-local k8s-services--traffic-timer nil
+  "Repeating timer that re-polls aggregate Service traffic.
+Lives on the Services buffer; cancelled on kill-buffer.")
+
+(defun k8s-services--traffic-tick (buf)
+  "Poll one tick of aggregated Service traffic into BUF's history,
+then schedule a re-render so the IN/s / OUT/s columns update."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (condition-case err
+          (let* ((conn (k8s--ensure-connection))
+                 (ns (or k8s--namespace
+                         (k8s--connection-default-namespace conn))))
+            (unless k8s-services--traffic-history
+              (setq k8s-services--traffic-history
+                    (make-hash-table :test 'equal)))
+            (k8s-traffic-fold-into-history
+             k8s-services--traffic-history
+             (k8s-traffic-collect conn ns)
+             (float-time))
+            (revert-buffer nil t))
+        (error
+         (message "k8s-services traffic poll: %s"
+                  (error-message-string err)))))))
+
+(defun k8s-services--traffic-start ()
+  "Kick off the traffic poll for the current Services buffer."
+  (when (and k8s-services-show-traffic
+             (derived-mode-p 'k8s-services-mode))
+    (let ((buf (current-buffer)))
+      (when (timerp k8s-services--traffic-timer)
+        (cancel-timer k8s-services--traffic-timer))
+      ;; Do an immediate first tick so the first poll's sample is in.
+      (run-with-timer 0 nil #'k8s-services--traffic-tick buf)
+      (setq k8s-services--traffic-timer
+            (run-at-time k8s-metrics-refresh-interval
+                         k8s-metrics-refresh-interval
+                         #'k8s-services--traffic-tick buf)))))
+
+(defun k8s-services--traffic-stop ()
+  "Cancel the Services view's traffic poll timer."
+  (when (timerp k8s-services--traffic-timer)
+    (cancel-timer k8s-services--traffic-timer))
+  (setq k8s-services--traffic-timer nil))
+
+(add-hook 'k8s-services-mode-hook #'k8s-services--traffic-start)
+
+;; Make sure the timer doesn't outlive the buffer.
+(defun k8s-services--kill-hook ()
+  (when (derived-mode-p 'k8s-services-mode)
+    (k8s-services--traffic-stop)))
+(add-hook 'kill-buffer-hook #'k8s-services--kill-hook)
+
+;; Connection-helper used by the poll (one-liner if `k8s--connection'
+;; has a default-namespace slot — fall back gracefully if it doesn't).
+(defun k8s--connection-default-namespace (_conn)
+  "Best-effort: return the namespace this connection prefers, or nil."
+  (or (bound-and-true-p k8s--namespace) nil))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Ingresses
