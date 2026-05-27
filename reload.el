@@ -65,26 +65,30 @@ newer than its `.elc' (or has no `.elc' yet, or hasn't been loaded
 into the running session).  Bind to `t' for one-off full rebuilds.")
 
 (defun eltainer--maybe-recompile-and-load (src module)
-  "Conditionally recompile + reload SRC (a `.el' path) for MODULE.
-Three states drive the decision; returns the state symbol:
+  "Recompile (when needed) + reload SRC (a `.el' path) for MODULE.
+Returns one of:
 
   `recompiled' — `.el' is newer than `.elc' (or `.elc' is
                   missing), or `eltainer-reload-force' is non-nil.
                   Byte-compile, drop the feature, `load' fresh.
-  `loaded'     — `.elc' is up-to-date but the feature isn't yet
-                  bound in this session (cold start path).  `load'
-                  without recompiling.
-  `skipped'    — `.elc' is up-to-date AND the feature is already
-                  loaded.  Nothing to do.
-  `error'      — byte-compile reported failure (push to errors at
-                  the call site)."
+  `reloaded'   — `.elc' is up-to-date.  Skip the byte-compile (the
+                  expensive step) but still `load' the file so the
+                  running session matches what's on disk.  Important:
+                  this picks up a `.elc' freshly produced by
+                  `make compile' in a shell, even though no `.el'
+                  was edited inside Emacs.
+  `error'      — byte-compile reported failure.
+
+`load' is always called.  It's cheap when the .elc is already in
+the session; doing it unconditionally means `eltainer-reload' is
+predictable -- it always brings the running session in sync with
+disk.  Byte-compile is the only thing we ever skip."
   (when (file-exists-p src)
     (let* ((elc (byte-compile-dest-file src))
            (needs-compile (or eltainer-reload-force
                               (not (and elc (file-exists-p elc)))
                               (file-newer-than-file-p src elc)))
-           (sym (intern module))
-           (loaded (featurep sym)))
+           (sym (intern module)))
       (cond
        (needs-compile
         (if (byte-compile-file src)
@@ -93,10 +97,10 @@ Three states drive the decision; returns the state symbol:
               (load (file-name-sans-extension src) nil 'nomessage)
               'recompiled)
           'error))
-       ((not loaded)
+       (t
+        (setq features (delq sym features))
         (load (file-name-sans-extension src) nil 'nomessage)
-        'loaded)
-       (t 'skipped)))))
+        'reloaded)))))
 
 (defun eltainer-reload (&optional force)
   "Recompile + reload every eltainer module whose `.el' is newer
@@ -132,12 +136,11 @@ something now stale."
                                   eltainer--source-dir)
                             load-path))
          (errors nil)
-         (recompiled 0) (loaded 0) (skipped 0))
+         (recompiled 0) (reloaded 0))
     (cl-flet ((step (src mod)
                 (pcase (eltainer--maybe-recompile-and-load src mod)
                   ('recompiled (cl-incf recompiled))
-                  ('loaded     (cl-incf loaded))
-                  ('skipped    (cl-incf skipped))
+                  ('reloaded   (cl-incf reloaded))
                   ('error      (push mod errors)))))
       ;; Top-level shared modules first.
       (dolist (mod '("eltainer-ui" "eltainer-gauge" "eltainer-fs"
@@ -164,8 +167,8 @@ something now stale."
             (funcall major-mode)
             (cl-incf rebound))))
       (message
-       "eltainer-reload: %d recompiled, %d loaded, %d skipped; %d buffer%s refreshed%s"
-       recompiled loaded skipped
+       "eltainer-reload: %d recompiled, %d reloaded; %d buffer%s refreshed%s"
+       recompiled reloaded
        rebound (if (= rebound 1) "" "s")
        (if errors
            (format "; %d compile failure(s): %s"
