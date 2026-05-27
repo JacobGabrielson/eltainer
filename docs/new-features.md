@@ -50,6 +50,15 @@ when a filter is active.
 
 ---
 
+## Pool of candidate features  *(menu, not roadmap)*
+
+[`docs/feature-ideas.md`](feature-ideas.md) lists ~25 features
+filtered from a scan of mainstream Kubernetes UIs (GUI + TUI) —
+grouped by area (resource coverage, actions, navigation,
+observability, editing, customisation) with effort estimates and
+rough prioritisation.  Pick from there when picking the next big
+piece of work.
+
 ## Traffic through a load balancer  *(status: v1 shipped — see [docs/lb-traffic-plan.md](lb-traffic-plan.md))*
 
 v1 covers Services: `IN/s` + `OUT/s` columns in the Services view
