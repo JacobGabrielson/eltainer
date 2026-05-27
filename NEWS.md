@@ -32,9 +32,9 @@ resource-switcher:
 | `v`             | PersistentVolumeClaims | namespaced |
 | `V`             | PersistentVolumes      | cluster     |
 | `C`             | StorageClasses         | cluster     |
-| `n`             | NetworkPolicies        | namespaced  |
+| `W`             | NetworkPolicies        | namespaced  |
 | `h`             | HorizontalPodAutoscalers | namespaced |
-| `b`             | PodDisruptionBudgets   | namespaced  |
+| `B`             | PodDisruptionBudgets   | namespaced  |
 
 Each composes with the existing facilities — `g` to refresh, `F`
 to narrow by label / name, `Y` to edit, `d` to delete.
