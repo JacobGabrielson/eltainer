@@ -308,26 +308,107 @@ then wires each view entry's KEY to its COMMAND."
 ;; effect under `M-x eltainer-reload'.
 (eltainer--rebuild-keymap)
 
-(defun eltainer--insert-entry (entry)
-  "Insert one dashboard row for ENTRY (KEY LABEL COMMAND)."
+(defcustom eltainer-dashboard-two-column-threshold 8
+  "When a dashboard group has more than this many entries, render it
+in two columns.  Set to a huge number to force single-column."
+  :type 'integer
+  :group 'eltainer)
+
+(defcustom eltainer-dashboard-column-width 36
+  "Width (chars) of the left cell when a group is rendered in two
+columns.  Long labels are not truncated — they push the right
+column rightward.  Tune for your typical key + label length."
+  :type 'integer
+  :group 'eltainer)
+
+(defun eltainer--entry-text (entry)
+  "Return the inline propertized text for ENTRY (KEY LABEL CMD).
+No padding, no trailing newline — just `KEY  LABEL'."
   (let* ((key   (nth 0 entry))
          (label (nth 1 entry))
          (cmd   (nth 2 entry))
-         (start (point))
          (avail (fboundp cmd)))
+    (concat
+     (propertize (format "%-3s" key)
+                 'font-lock-face (if avail
+                                     'eltainer-resource-name
+                                   'eltainer-dim))
+     (propertize label
+                 'font-lock-face (if avail 'default 'eltainer-dim)))))
+
+(defun eltainer--insert-entry (entry)
+  "Insert one dashboard row for ENTRY (KEY LABEL COMMAND).
+Single-column form — used when the group is below the
+two-column threshold."
+  (let ((start (point))
+        (cmd (nth 2 entry))
+        (avail (fboundp (nth 2 entry))))
     (magit-insert-section (eltainer-entry cmd t)
-      (insert "  "
-              (propertize (format "%-3s" key)
-                          'font-lock-face (if avail
-                                              'eltainer-resource-name
-                                            'eltainer-dim))
-              (propertize label
-                          'font-lock-face (if avail 'default 'eltainer-dim)))
+      (insert "  ")
+      (insert (eltainer--entry-text entry))
       (insert "\n")
       (add-text-properties start (point) `(eltainer-cmd ,cmd))
       (unless avail
         (add-text-properties start (point)
                              '(help-echo "command unavailable (module not loaded)"))))))
+
+(defun eltainer--insert-pair (left right)
+  "Insert one row containing LEFT and RIGHT entries side-by-side.
+Each entry's span carries its own `eltainer-cmd' text property,
+so `eltainer-dwim-ret' fires the right command based on point.
+The row is one magit-section so `n'/`p' navigate row-by-row."
+  (let ((row-start (point)))
+    (magit-insert-section (eltainer-row 'pair t)
+      ;; Left cell, padded out to `eltainer-dashboard-column-width'.
+      (let* ((cell-start (point))
+             (left-cmd (nth 2 left))
+             (left-avail (fboundp left-cmd)))
+        (insert "  ")
+        (insert (eltainer--entry-text left))
+        (let ((pad (max 1 (- eltainer-dashboard-column-width
+                             (- (point) cell-start)))))
+          (insert (make-string pad ?\s)))
+        (add-text-properties cell-start (point)
+                             (list 'eltainer-cmd left-cmd))
+        (unless left-avail
+          (add-text-properties cell-start (point)
+                               '(help-echo "command unavailable (module not loaded)"))))
+      ;; Right cell, if any.
+      (when right
+        (let* ((cell-start (point))
+               (right-cmd (nth 2 right))
+               (right-avail (fboundp right-cmd)))
+          (insert (eltainer--entry-text right))
+          (add-text-properties cell-start (point)
+                               (list 'eltainer-cmd right-cmd))
+          (unless right-avail
+            (add-text-properties cell-start (point)
+                                 '(help-echo "command unavailable (module not loaded)")))))
+      (insert "\n")
+      (ignore row-start))))
+
+(defun eltainer--insert-group-entries (entries)
+  "Render ENTRIES as one or two columns based on
+`eltainer-dashboard-two-column-threshold'."
+  (cond
+   ((> (length entries) eltainer-dashboard-two-column-threshold)
+    ;; Two columns, fill top-to-bottom (left column first, then right).
+    ;; That keeps the order users already learned (Pulse/Events at the
+    ;; top of the Kubernetes section), with the second half of the list
+    ;; flowing into the right column.
+    (let* ((n (length entries))
+           (half (ceiling (/ n 2.0)))
+           (left  (cl-subseq entries 0 half))
+           (right (cl-subseq entries half))
+           (rows  (cl-mapcar #'cons left
+                             (append right
+                                     (make-list (- half (length right))
+                                                nil)))))
+      (dolist (row rows)
+        (eltainer--insert-pair (car row) (cdr row)))))
+   (t
+    (dolist (entry entries)
+      (eltainer--insert-entry entry)))))
 
 (defun eltainer--insert-active-kubeconfig ()
   "Render the active k8s context + kubeconfig and a `b' switch hint."
@@ -357,8 +438,7 @@ then wires each view entry's KEY to its COMMAND."
             (propertize (car group) 'font-lock-face 'eltainer-section-heading))
           (when (equal (car group) "Kubernetes")
             (eltainer--insert-active-kubeconfig))
-          (dolist (entry (cdr group))
-            (eltainer--insert-entry entry))
+          (eltainer--insert-group-entries (cdr group))
           (insert "\n")))
       (insert "\n"))
     (let ((magit-section-cache-visibility nil))
