@@ -22,6 +22,37 @@ The per-CRD instance buffer's header now includes the active
 version (`Certificate.cert-manager.io/v1`) so you always know
 exactly which API you're hitting.
 
+### Cluster sanity scan (`Z` from dashboard / `!` from `?`)
+
+`*k8s:scan*` runs a battery of read-only checks against every
+Pod / Deployment / StatefulSet / DaemonSet / Service / Node /
+Ingress / PVC / ClusterRoleBinding on the cluster, and reports
+findings grouped by severity (Error / Warning / Info) with a
+0-100 cluster-hygiene score at the top.
+
+Findings are colour-coded; each row carries a `k8s-jump-target'
+so `RET` opens the offending resource's view narrowed to it.
+
+v1 linters cover:
+- **Pods**: no resources.limits, no livenessProbe, no
+  readinessProbe (info), `:latest` / unpinned image tags,
+  containers without securityContext.runAsNonRoot, restartCount
+  > `k8s-scan-pod-restarts-warn' (default 5), Pending >5 min.
+- **Deployments / STS / DS**: replicas=0 (info),
+  spec.selector.matchLabels mismatch with
+  spec.template.metadata.labels (error).
+- **Services**: no selector + not ExternalName, multiple ports
+  without names.
+- **Nodes**: Ready != True (error), MemoryPressure /
+  DiskPressure / PIDPressure True.
+- **Ingresses**: rule with no host (catch-all, info).
+- **PVCs**: phase != Bound.
+- **ClusterRoleBindings**: cluster-admin bound to non-system
+  subjects.
+
+Each linter is a small pure function over a resource alist; the
+set is easy to extend.
+
 ### Emacs-bookmark integration for K8s rows
 
 `bookmark.el` now knows how to record-and-jump K8s resource rows.

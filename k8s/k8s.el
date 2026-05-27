@@ -941,6 +941,7 @@ LINE-FN inserts one item."
 (autoload 'k8s-portforward-at-point     "k8s-portforward" nil t)
 (autoload 'k8s-portforward-list         "k8s-portforward" nil t)
 (autoload 'k8s-events                   "k8s-events" nil t)
+(autoload 'k8s-scan                     "k8s-scan" nil t)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Context-aware dispatch
@@ -1006,6 +1007,7 @@ That is: a section whose value is a resource alist (carries
    ["Cluster"
     ("P" "Pulse"        k8s-pulse)
     ("E" "Events"       k8s-events)
+    ("!" "Scan"         k8s-scan)
     ("o" "Nodes"        k8s-nodes)]
    ["Agents"
     ("A" "Sandboxes"    k8s-sandboxes)]

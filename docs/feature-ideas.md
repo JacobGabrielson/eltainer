@@ -114,15 +114,9 @@ container-dired write ops.  The mainstream UIs offer:
 - **Port-forward manager** — `P` on a Pod row.
   *(experimental, shipped 2026-05-27 — wire protocol implemented,
   live verification still pending)*
-- **Cluster sanity scan** — `*k8s:scan*` runs a battery of
-  read-only checks: pods without `resources.limits`, pods without
-  liveness/readiness probes, missing pdb on multi-replica
-  deployments, unused Secrets / ConfigMaps, NetworkPolicies that
-  select no pods, nodes near limits, etc.  Each finding has a
-  short rationale + the offending resource (RET jumps to it).
-  This earned its own ecosystem already (popeye, kube-score,
-  kubeaudit) — even a small first pass is useful.  *(idea —
-  pleasant scope, well-defined output)*
+- **Cluster sanity scan** — pod / workload / service / node /
+  ingress / PVC / CRB checks with severity + score.
+  *(shipped 2026-05-27)*  More linter arms easy to add.
 - **`can-i` / `who-can` reverse RBAC** — `?A` (auth) on a row
   POSTs to `/apis/authorization.k8s.io/v1/selfsubjectaccessreviews`
   for "can I do X on this".  `M-x k8s-who-can <verb> <kind>`

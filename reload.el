@@ -54,7 +54,8 @@
     "k8s-actions"
     "k8s-portforward"
     "k8s-events"
-    "k8s-bookmarks")
+    "k8s-bookmarks"
+    "k8s-scan")
   "K8s-side modules in load order (dependencies first).")
 
 (defun eltainer-reload ()

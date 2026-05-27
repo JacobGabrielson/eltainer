@@ -243,6 +243,7 @@ k8s/
   k8s-events.el          Cluster events view (`E')
   k8s-portforward.el     TCP port-forward via the API WebSocket (experimental)
   k8s-bookmarks.el       Emacs bookmark.el integration for resource rows
+  k8s-scan.el            Cluster sanity scan (read-only linters, score)
   k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```
