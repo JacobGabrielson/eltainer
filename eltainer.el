@@ -29,14 +29,19 @@
 
 (defconst eltainer-views
   '(("Docker" .
+     ;; NB: avoid keys used in the Kubernetes group below — the
+     ;; dashboard binds last-writer-wins, so `S' would silently
+     ;; shadow k8s StatefulSets / etc.  `eltainer--rebuild-keymap'
+     ;; warns when duplicates appear, but choose unique keys here
+     ;; so the warning never fires.
      (("c" "Containers" docker-containers)
-      ("S" "Stacks"     docker-stacks)
+      ("T" "Stacks"     docker-stacks)
       ("p" "Pulse"      docker-pulse)
       ("I" "Images"     docker-images)
-      ("V" "Volumes"    docker-volumes)
+      ("O" "Volumes"    docker-volumes)
       ("N" "Networks"   docker-networks)
       ("u" "Pull"       docker-pull-image)
-      ("B" "Build"      docker-build)))
+      ("M" "Build"      docker-build)))
     ("Kubernetes" .
      (("P" "Pulse"         k8s-pulse)
       ("E" "Events"        k8s-events)
@@ -292,20 +297,42 @@ q to cancel."
   "(Re)populate `eltainer-mode-map' from scratch.
 Clears any prior bindings (in case `eltainer-views' just lost a key
 on reload), restores the parent, sets the explicit dashboard keys,
-then wires each view entry's KEY to its COMMAND."
+then wires each view entry's KEY to its COMMAND.
+
+Warns when two view entries share a key — the dashboard binds
+last-writer-wins, so a duplicate silently shadows the earlier
+launcher (its row still renders, but `RET'/`<key>' goes to the
+later one).  Caught at load time; the message points at the
+collision."
   (setcdr eltainer-mode-map nil)        ; clear existing bindings
   (set-keymap-parent eltainer-mode-map magit-section-mode-map)
-  (dolist (pair '(("q"   . quit-window)
-                  ("g"   . eltainer-refresh)
-                  ("?"   . describe-mode)
-                  ("b"   . eltainer-switch-kubeconfig)
-                  ("RET" . eltainer-dwim-ret)))
-    (keymap-set eltainer-mode-map (car pair) (cdr pair)))
-  (dolist (group eltainer-views)
-    (dolist (entry (cdr group))
-      (let ((key (nth 0 entry))
-            (cmd (nth 2 entry)))
-        (keymap-set eltainer-mode-map key cmd)))))
+  (let* ((explicit '(("q"   . quit-window)
+                     ("g"   . eltainer-refresh)
+                     ("?"   . describe-mode)
+                     ("b"   . eltainer-switch-kubeconfig)
+                     ("RET" . eltainer-dwim-ret)))
+         (seen (make-hash-table :test 'equal))
+         conflicts)
+    (dolist (pair explicit)
+      (puthash (car pair)
+               (format "(dashboard) %s" (cdr pair))
+               seen)
+      (keymap-set eltainer-mode-map (car pair) (cdr pair)))
+    (dolist (group eltainer-views)
+      (dolist (entry (cdr group))
+        (let* ((key (nth 0 entry))
+               (label (nth 1 entry))
+               (cmd (nth 2 entry))
+               (here (format "%s/%s" (car group) label))
+               (prev (gethash key seen)))
+          (when prev
+            (push (format "`%s' bound twice (%s vs %s)" key prev here)
+                  conflicts))
+          (puthash key here seen)
+          (keymap-set eltainer-mode-map key cmd))))
+    (when conflicts
+      (message "eltainer: dashboard key conflicts -- last writer wins:\n  %s"
+               (mapconcat #'identity (nreverse conflicts) "\n  ")))))
 
 ;; Build the keymap on every file load so the data above and the
 ;; explicit bindings inside `eltainer--rebuild-keymap' both take
