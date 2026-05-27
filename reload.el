@@ -31,7 +31,8 @@
     "docker-metrics"
     "docker"
     "docker-stacks"
-    "docker-pulse")
+    "docker-pulse"
+    "docker-create")
   "Docker-side modules in load order (dependencies first).")
 
 (defconst eltainer-k8s-modules

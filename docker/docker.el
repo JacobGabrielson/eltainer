@@ -709,8 +709,10 @@ Tries `getent hosts' → `nslookup' → dump of `/etc/resolv.conf' +
 (autoload 'docker-dired-browse-at-point "docker-dired" nil t)
 (autoload 'docker-stacks "docker-stacks" nil t)
 (autoload 'docker-pulse "docker-pulse" nil t)
+(autoload 'docker-create "docker-create" nil t)
 (keymap-set docker-containers-mode-map "f" #'docker-dired-browse-at-point)
 (keymap-set docker-containers-mode-map "D" #'docker-container-dns-lookup-at-point)
+(keymap-set docker-containers-mode-map "+" #'docker-create)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Transient dispatch

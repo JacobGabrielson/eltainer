@@ -87,7 +87,7 @@ the same way pull does.  Same UX, different verb.
 
 ---
 
-## Container create from a form  *(idea)*
+## Container create from a form  *(shipped 2026-05-27)*
 
 Today eltainer manages existing containers; you can't create one.
 A "new container" buffer (similar to `k8s-edit' but with a fresh

@@ -218,6 +218,7 @@ docker/
   docker-dired.el        Dired-mode buffer over a container's filesystem
   docker-stacks.el       Read-only Compose-stack view (group by project label)
   docker-pulse.el        Single-host docker pulse dashboard
+  docker-create.el       Create + start a container from a JSON template (`+')
   docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 

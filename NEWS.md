@@ -13,6 +13,26 @@ the in-flight backlog.
 
 ## 2026-05-27
 
+### Docker: Container-create form (`+` on the containers view)
+
+`+` on a docker containers row (or `M-x docker-create`) pops
+`*docker:create*` with a JSON template for `POST /containers/
+create`.  Edit the body, `C-c C-c` POSTs + starts; `C-c C-k`
+cancels.
+
+JSON is the engine API's native shape — every field the daemon
+supports is editable (Cmd / Env / Labels / ExposedPorts /
+HostConfig.PortBindings / Binds / NetworkMode / RestartPolicy
+/ …).  `#`-prefixed banner at the top of the buffer documents
+the common fields; the `---` separator marks where the JSON
+body starts.  Container name defaults to
+`eltainer-<image-stem>-<random>`; the prompt accepts any
+override.
+
+Errors (image missing, bad JSON, port already bound, name
+collision) pop a `*docker:create:error*` buffer with the
+daemon's response so you can fix and retry.
+
 ### Docker: Compose-stack view (`S` from dashboard)
 
 `*docker:stacks*` lists every Compose-managed stack on the
