@@ -241,7 +241,9 @@ sample has been recorded yet (first poll)."
       (insert (propertize "(sampling…)\n" 'font-lock-face 'k8s-dim)))))
 
 (defun k8s-traffic--buffer-refresh ()
-  "Re-poll the Service + pods + Summary, fold into history, render."
+  "Re-poll the Service + pods + Summary, fold into history, render.
+Bound to `g' in `k8s-traffic-mode-map'."
+  (interactive)
   (let* ((conn k8s-traffic--buffer-conn)
          (ns   k8s-traffic--buffer-ns)
          (svc-name k8s-traffic--buffer-service)
