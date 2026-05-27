@@ -49,7 +49,8 @@
     "k8s-helm"
     "k8s-crds"
     "k8s-pulse"
-    "k8s-xray")
+    "k8s-xray"
+    "k8s-edit")
   "K8s-side modules in load order (dependencies first).")
 
 (defun eltainer-reload ()

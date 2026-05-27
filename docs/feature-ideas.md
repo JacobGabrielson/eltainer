@@ -84,12 +84,11 @@ container-dired write ops.  The mainstream UIs offer:
 - **Force-restart pod** — `K` (kill) — delete the pod (the
   controller recreates it).  Distinct from `d` which is the
   "remove this resource" semantic.  *(idea)*
-- **Edit YAML inline** — `e` (on a resource row that already
-  isn't taken by exec, so we need a different key — `Y`?) fetches
-  the resource, drops it into a yaml-mode buffer with a header,
-  `C-c C-c` applies via PATCH.  Round-trip uses `application/
-  strategic-merge-patch+json` so we send only the diff.  *(idea —
-  this one shows up everywhere)*
+- **Edit YAML inline** — `Y` fetches the resource, drops it into
+  a yaml-mode buffer with a header, `C-c C-c' PUTs it back.
+  Server does the YAML round-trip via content-type negotiation;
+  `resourceVersion' provides optimistic concurrency.
+  *(shipped 2026-05-27)*
 - **Previous container logs** — `L` while on a CrashLoopBackOff
   pod fetches with `?previous=true` so you see the LAST run, not
   the current empty one.  One-line change to `k8s--log-start`.

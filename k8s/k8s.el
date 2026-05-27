@@ -931,6 +931,7 @@ LINE-FN inserts one item."
 (autoload 'k8s-crds "k8s-crds" nil t)
 (autoload 'k8s-pulse "k8s-pulse" nil t)
 (autoload 'k8s-xray-at-point "k8s-xray" nil t)
+(autoload 'k8s-edit-at-point "k8s-edit" nil t)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Context-aware dispatch

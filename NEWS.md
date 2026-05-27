@@ -22,6 +22,27 @@ The per-CRD instance buffer's header now includes the active
 version (`Certificate.cert-manager.io/v1`) so you always know
 exactly which API you're hitting.
 
+### Edit any resource's YAML in place (`Y`)
+
+`Y` on a resource row in any k8s view opens that resource's YAML
+in `*k8s:edit:NS/KIND/NAME*` (with `yaml-mode` if it's installed,
+fundamental-mode otherwise).  Edit, then `C-c C-c` PUTs it back
+via the K8s API.  `C-c C-k` cancels.
+
+Content-type negotiation does the YAML round-trip on the server
+side — no in-Emacs YAML parser required.  PUT (rather than PATCH)
+sends the whole resource; the API server's
+`metadata.resourceVersion' enforcement gives optimistic
+concurrency for free (a 409 means someone else mutated it; the
+error buffer surfaces the server's message).
+
+After a successful apply the buffer reloads the freshly-returned
+YAML (with the new `resourceVersion`, server-added defaults, etc.)
+so the next edit cycle starts from current state.
+
+Live-tested by bumping a Deployment's `replicas: 1 → 2` and
+reverting via two PUTs.
+
 ### xray resource-tree view (`T` on a workload)
 
 `T` on a Deployment / StatefulSet / DaemonSet / Job / CronJob /
