@@ -485,6 +485,15 @@ not every kubeconfig has, and the kubelet may be unreachable."
          (path (format "/api/v1/namespaces/%s/events%s" namespace query)))
     (cdr (assq 'items (k8s-get conn path)))))
 
+(defun k8s-list-events-all (conn &optional field-selector)
+  "List events cluster-wide via CONN, optionally filtered by FIELD-SELECTOR."
+  (let* ((query (if field-selector
+                    (format "?fieldSelector=%s"
+                            (url-hexify-string field-selector))
+                  ""))
+         (path (format "/api/v1/events%s" query)))
+    (cdr (assq 'items (k8s-get conn path)))))
+
 ;;; ---------------------------------------------------------------------------
 ;;; Error condition
 

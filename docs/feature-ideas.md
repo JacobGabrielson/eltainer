@@ -99,8 +99,7 @@ container-dired write ops.  The mainstream UIs offer:
 
 - **Cluster pulse dashboard** — `*k8s:pulse*` showing aggregate
   health: total Pods by phase, Nodes Ready/NotReady, recent
-  Warning events count, top CPU/mem pods.  One key from the
-  dashboard.  Read-only.  *(idea)*
+  Warning events count, top CPU/mem pods.  *(shipped 2026-05-27)*
 - **xray / resource tree** — `T` on a workload row recursively
   expands: Deployment → ReplicaSets → Pods → Containers → mounted
   Volumes → referenced ConfigMaps / Secrets / PVCs, each level a

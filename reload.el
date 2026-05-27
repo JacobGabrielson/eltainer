@@ -47,7 +47,8 @@
     "k8s-traffic"
     "k8s"
     "k8s-helm"
-    "k8s-crds")
+    "k8s-crds"
+    "k8s-pulse")
   "K8s-side modules in load order (dependencies first).")
 
 (defun eltainer-reload ()

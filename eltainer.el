@@ -34,7 +34,8 @@
       ("N" "Networks"   docker-networks)
       ("u" "Pull"       docker-pull-image)))
     ("Kubernetes" .
-     (("k" "Pods"          k8s-pods)
+     (("P" "Pulse"         k8s-pulse)
+      ("k" "Pods"          k8s-pods)
       ("d" "Deployments"   k8s-deployments)
       ("s" "Services"      k8s-services)
       ("S" "StatefulSets"  k8s-statefulsets)

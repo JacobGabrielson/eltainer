@@ -13,6 +13,35 @@ the in-flight backlog.
 
 ## 2026-05-27
 
+### CRDs view shows served versions
+
+The CRDs listing grew a VERSIONS column listing every served
+version of each CRD; the storage version is marked with `*` (so
+`v1*, v1beta1` reads as "v1 is storage, v1beta1 also served").
+The per-CRD instance buffer's header now includes the active
+version (`Certificate.cert-manager.io/v1`) so you always know
+exactly which API you're hitting.
+
+### Cluster-pulse dashboard
+
+`P` from the dashboard (or `?` → *Pulse*) opens `*k8s:pulse*` —
+a one-buffer cluster health summary that self-refreshes every 30
+seconds.  Sections:
+
+- **Pods** — count per phase, with a small bar per phase showing
+  relative size; Running/Succeeded green, Pending yellow,
+  Failed/Unknown red.
+- **Nodes** — Ready + NotReady tallies.
+- **Workloads** — Deployments / StatefulSets / DaemonSets / Jobs
+  / CronJobs / Services / Ingresses, counted cluster-wide.
+- **Recent Warning events** — every Warning event in the last
+  hour (configurable via `k8s-pulse-recent-events-window-minutes`),
+  newest first, with reason / involved-object / age.
+- **Top 5 CPU consumers** and **Top 5 memory consumers** —
+  pods ranked by total usage across containers.
+
+The 5 in Top-5 is `k8s-pulse-top-consumers`.
+
 ### Generic CustomResourceDefinition browser
 
 `R` from the dashboard (or `?` → *Custom resources*) opens

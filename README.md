@@ -231,6 +231,7 @@ k8s/
   k8s-helm.el            Read-only Helm 3 view (decodes release secrets directly)
   k8s-traffic.el         Per-Service ingress/egress aggregation + M-buffer
   k8s-crds.el            Generic CRD browser (auto-detects + renders printer-columns)
+  k8s-pulse.el           Cluster-pulse dashboard (phase counts, top consumers, events)
   k8s-exec.el            One-shot + interactive TTY pod exec
   k8s.el                 Shared k8s magit-section views + transient
 ```

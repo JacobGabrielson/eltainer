@@ -929,6 +929,7 @@ LINE-FN inserts one item."
 (autoload 'k8s-pods "k8s-pods" nil t)
 (autoload 'k8s-helm "k8s-helm" nil t)
 (autoload 'k8s-crds "k8s-crds" nil t)
+(autoload 'k8s-pulse "k8s-pulse" nil t)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Context-aware dispatch
@@ -978,6 +979,7 @@ That is: a section whose value is a resource alist (carries
     ("m" "ConfigMaps"   k8s-configmaps)
     ("x" "Secrets"      k8s-secrets)]
    ["Cluster"
+    ("P" "Pulse"        k8s-pulse)
     ("o" "Nodes"        k8s-nodes)]
    ["Agents"
     ("A" "Sandboxes"    k8s-sandboxes)]

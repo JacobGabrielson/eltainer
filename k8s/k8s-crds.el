@@ -177,20 +177,46 @@ NAMESPACE is honoured only for `scope: Namespaced' CRDs."
 (defvar-local k8s-crds--crd-cache nil
   "All CRDs from the cluster, cached on the listing buffer.")
 
+(defun k8s-crds--all-served-versions (crd)
+  "Return list of `name's of every served version of CRD."
+  (let ((vs (append (cdr (assq 'versions (cdr (assq 'spec crd)))) nil)))
+    (cl-loop for v in vs
+             when (eq (cdr (assq 'served v)) t)
+             collect (cdr (assq 'name v)))))
+
+(defun k8s-crds--version-string (crd)
+  "Return a human display of CRD's served versions, with `*' marking
+the storage version (the one we hit for reads + writes).
+Example: `v1*, v1beta1'."
+  (let* ((versions (append (cdr (assq 'versions (cdr (assq 'spec crd)))) nil))
+         (parts
+          (cl-loop for v in versions
+                   when (eq (cdr (assq 'served v)) t)
+                   collect
+                   (if (eq (cdr (assq 'storage v)) t)
+                       (propertize
+                        (concat (cdr (assq 'name v)) "*")
+                        'font-lock-face 'eltainer-resource-name)
+                     (propertize (cdr (assq 'name v))
+                                 'font-lock-face 'k8s-dim)))))
+    (mapconcat #'identity parts ", ")))
+
 (defun k8s-crds--insert-crd-line (crd)
-  "One row of the CRDs listing: NAME / GROUP / SCOPE / KIND / AGE."
+  "One row of the CRDs listing: NAME / GROUP / VERSIONS / SCOPE / KIND / AGE."
   (let* ((meta (cdr (assq 'metadata crd)))
          (spec (cdr (assq 'spec crd)))
          (name (cdr (assq 'name meta)))
          (group (cdr (assq 'group spec)))
          (scope (cdr (assq 'scope spec)))
          (kind (cdr (assq 'kind (cdr (assq 'names spec)))))
+         (versions (k8s-crds--version-string crd))
          (age  (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
     (magit-insert-section (crd crd t)
       (magit-insert-heading
-        (format "  %-45s %-30s %-12s %-22s %s\n"
+        (format "  %-45s %-30s %-18s %-12s %-22s %s\n"
                 (propertize name 'font-lock-face 'k8s-resource-name)
                 (propertize group 'font-lock-face 'k8s-dim)
+                versions
                 (propertize scope 'font-lock-face
                             (if (equal scope "Namespaced")
                                 'eltainer-status-running
@@ -231,8 +257,8 @@ Honours the active `eltainer-filter''s name-regex client-side."
     (magit-insert-section (k8s-root)
       (k8s--insert-header "CRDs")
       (insert (propertize
-               (format "  %-45s %-30s %-12s %-22s %s\n"
-                       "NAME" "GROUP" "SCOPE" "KIND" "AGE")
+               (format "  %-45s %-30s %-18s %-12s %-22s %s\n"
+                       "NAME" "GROUP" "VERSIONS" "SCOPE" "KIND" "AGE")
                'font-lock-face 'k8s-section-heading))
       (insert "\n")
       (if (null crds)
@@ -376,7 +402,9 @@ Honours the active `eltainer-filter''s name-regex client-side."
     (erase-buffer)
     (setq header-line-format nil)
     (magit-insert-section (k8s-root)
-      (k8s--insert-header (format "%s.%s" kind group))
+      (k8s--insert-header
+       (format "%s.%s/%s" kind group
+               (or (cdr (assq 'name (k8s-crds--active-version crd))) "?")))
       (insert (propertize (k8s-crd-instances--column-header crd)
                           'font-lock-face 'k8s-section-heading))
       (insert "\n")
