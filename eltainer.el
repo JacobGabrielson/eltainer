@@ -35,6 +35,7 @@
       ("u" "Pull"       docker-pull-image)))
     ("Kubernetes" .
      (("P" "Pulse"         k8s-pulse)
+      ("E" "Events"        k8s-events)
       ("k" "Pods"          k8s-pods)
       ("d" "Deployments"   k8s-deployments)
       ("s" "Services"      k8s-services)

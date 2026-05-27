@@ -52,7 +52,8 @@
     "k8s-xray"
     "k8s-edit"
     "k8s-actions"
-    "k8s-portforward")
+    "k8s-portforward"
+    "k8s-events")
   "K8s-side modules in load order (dependencies first).")
 
 (defun eltainer-reload ()
