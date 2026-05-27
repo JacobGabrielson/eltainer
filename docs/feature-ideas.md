@@ -102,9 +102,8 @@ container-dired write ops.  The mainstream UIs offer:
   Warning events count, top CPU/mem pods.  *(shipped 2026-05-27)*
 - **xray / resource tree** — `T` on a workload row recursively
   expands: Deployment → ReplicaSets → Pods → Containers → mounted
-  Volumes → referenced ConfigMaps / Secrets / PVCs, each level a
-  magit-section.  This is the feature magit-section was designed
-  for.  *(idea — strong fit)*
+  Volumes → referenced ConfigMaps / Secrets / PVCs.
+  *(shipped 2026-05-27)*
 - **Quick-jump fuzzy switcher** — `M-x k8s-jump` opens a
   `completing-read` (vertico-friendly) listing every resource in
   the active namespace + the cluster-scoped ones.  Selecting one

@@ -22,6 +22,35 @@ The per-CRD instance buffer's header now includes the active
 version (`Certificate.cert-manager.io/v1`) so you always know
 exactly which API you're hitting.
 
+### xray resource-tree view (`T` on a workload)
+
+`T` on a Deployment / StatefulSet / DaemonSet / Job / CronJob /
+ReplicaSet / Service / Pod row opens
+`*k8s:xray:NS/KIND/NAME*` — a magit-section tree that descends
+from the workload through every layer of its dependency graph.
+For a Deployment, that's:
+
+```
+Deployment    podinfo  1/1 ready
+  ReplicaSet    podinfo-6d98d7d6cd  1/1 ready
+    Pod           podinfo-6d98...  Running · 1d
+      Container     podinfo  ghcr.io/... · Running, 0 restarts
+        [emptyDir]/data                   /data
+        Secret/web-nginx-tls              /certs
+```
+
+Every level is a magit-section so `TAB` folds it.  Volume-mount
+rows that point at a real resource (Secret, ConfigMap) carry a
+`k8s-jump-target` — `RET` opens that resource's view narrowed to
+the referenced object.  EmptyDirs / projected / hostPath /
+downwardAPI mounts render their kind as a label but stay inert.
+
+Init containers show with their actual phase ("Terminated
+(Completed)" once they've finished), not `?`.
+
+CronJob → most recent Jobs first → their Pods; Service → pods
+matching its selector.
+
 ### Cluster-pulse dashboard
 
 `P` from the dashboard (or `?` → *Pulse*) opens `*k8s:pulse*` —
