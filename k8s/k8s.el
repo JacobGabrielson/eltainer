@@ -928,6 +928,7 @@ LINE-FN inserts one item."
 
 (autoload 'k8s-pods "k8s-pods" nil t)
 (autoload 'k8s-helm "k8s-helm" nil t)
+(autoload 'k8s-crds "k8s-crds" nil t)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Context-aware dispatch
@@ -981,7 +982,9 @@ That is: a section whose value is a resource alist (carries
    ["Agents"
     ("A" "Sandboxes"    k8s-sandboxes)]
    ["Packaging"
-    ("h" "Helm releases" k8s-helm)]])
+    ("h" "Helm releases" k8s-helm)]
+   ["Extensions"
+    ("R" "Custom resources" k8s-crds)]])
 
 (transient-define-prefix k8s-dispatch ()
   "Context-aware command menu for the Kubernetes views.

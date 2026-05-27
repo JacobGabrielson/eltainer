@@ -64,11 +64,7 @@ single biggest leverage:
 - **CRD discovery + table view** — list
   `/apis/apiextensions.k8s.io/v1/customresourcedefinitions`, build
   a per-CRD view that renders `additionalPrinterColumns` from the
-  CRD spec into a magit-section table.  Falls back to "name + age
-  + describe" when the CRD doesn't declare its own columns.  Adds
-  a "CRDs" entry to the dashboard that drills into a list of CRD
-  groups → per-CRD views.  *(idea — biggest single ROI on this
-  list)*
+  CRD spec into a magit-section table.  *(shipped 2026-05-27)*
 
 ## Actions on existing views (small to medium)
 

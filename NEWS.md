@@ -13,6 +13,26 @@ the in-flight backlog.
 
 ## 2026-05-27
 
+### Generic CustomResourceDefinition browser
+
+`R` from the dashboard (or `?` → *Custom resources*) opens
+`*k8s:crds*` — every CRD on the cluster, grouped by API group,
+with NAME / GROUP / SCOPE / KIND / AGE columns.  `RET` on a CRD
+row drills into its instances; the columns of that view come
+directly from the CRD's own `additionalPrinterColumns` spec.
+
+No code per CRD: a small subset of JSONPath
+(`.metadata.name`, `.status.replicas`, `[0]` indexing,
+`[?(@.type=="Ready")]` equality filters) handles what every CRD's
+printer-columns use in practice.  Date-typed columns render
+through eltainer's age-tier face, so you get the same colour
+gradient you do everywhere else.  Priority-1+ ("wide") columns are
+hidden in v1 — describe (`i`) shows them.
+
+Tested live against the `cert-manager` CRDs (Certificate /
+CertificateRequest / Issuer / ClusterIssuer / Challenge / Order)
+and the `agents.x-k8s.io/v1alpha1` Sandbox CRD.
+
 ### Services view: per-Service IN/s + OUT/s traffic columns
 
 The Services view grows two new columns showing aggregate ingress

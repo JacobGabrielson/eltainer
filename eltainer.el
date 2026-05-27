@@ -46,7 +46,8 @@
       ("x" "Secrets"       k8s-secrets)
       ("o" "Nodes"         k8s-nodes)
       ("A" "Sandboxes"     k8s-sandboxes)
-      ("H" "Helm releases" k8s-helm))))
+      ("H" "Helm releases" k8s-helm)
+      ("R" "Custom resources (CRDs)" k8s-crds))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).
 `defconst' not `defvar' so editing this list and running
 `eltainer-reload' actually picks up the change — `defvar' is a
