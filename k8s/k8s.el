@@ -981,10 +981,18 @@ That is: a section whose value is a resource alist (carries
     ("j" "Jobs"         k8s-jobs)
     ("c" "CronJobs"     k8s-cronjobs)]
    ["Config & Network"
-    ("s" "Services"     k8s-services)
-    ("i" "Ingresses"    k8s-ingresses)
-    ("m" "ConfigMaps"   k8s-configmaps)
-    ("x" "Secrets"      k8s-secrets)]
+    ("s" "Services"        k8s-services)
+    ("i" "Ingresses"       k8s-ingresses)
+    ("m" "ConfigMaps"      k8s-configmaps)
+    ("x" "Secrets"         k8s-secrets)
+    ("n" "NetworkPolicies" k8s-networkpolicies)]
+   ["Storage"
+    ("v" "PVCs"            k8s-persistentvolumeclaims)
+    ("V" "PVs"             k8s-persistentvolumes)
+    ("z" "StorageClasses"  k8s-storageclasses)]
+   ["Scaling"
+    ("a" "HPAs"            k8s-horizontalpodautoscalers)
+    ("b" "PDBs"            k8s-poddisruptionbudgets)]
    ["Cluster"
     ("P" "Pulse"        k8s-pulse)
     ("o" "Nodes"        k8s-nodes)]
@@ -1715,6 +1723,199 @@ agent-sandbox controller isn't running)."
   (format "  %-36s %-12s %-22s %-16s %s\n"
           "NAME" "READY" "SERVICE" "POD IP" "AGE")
   #'k8s--insert-sandbox-line)
+
+;;; ---------------------------------------------------------------------------
+;;; HorizontalPodAutoscalers
+
+(defun k8s--insert-hpa-line (hpa)
+  "Insert an HPA summary line."
+  (let* ((meta (cdr (assq 'metadata hpa)))
+         (spec (cdr (assq 'spec hpa)))
+         (status (cdr (assq 'status hpa)))
+         (name (cdr (assq 'name meta)))
+         (ref (cdr (assq 'scaleTargetRef spec)))
+         (ref-str (format "%s/%s"
+                          (or (cdr (assq 'kind ref)) "?")
+                          (or (cdr (assq 'name ref)) "?")))
+         (mn (or (cdr (assq 'minReplicas spec)) 0))
+         (mx (or (cdr (assq 'maxReplicas spec)) 0))
+         (curr (or (cdr (assq 'currentReplicas status)) 0))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (horizontalpodautoscaler hpa t)
+      (magit-insert-heading
+        (format "  %-30s %-32s %4d %4d %4d  %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize ref-str 'font-lock-face 'k8s-dim)
+                mn mx curr age)))))
+
+(k8s--define-view horizontalpodautoscalers
+  "Major mode for HorizontalPodAutoscalers."
+  #'k8s-list-hpas
+  (format "  %-30s %-32s %4s %4s %4s  %s\n"
+          "NAME" "REFERENCE" "MIN" "MAX" "CURR" "AGE")
+  #'k8s--insert-hpa-line)
+
+;;; ---------------------------------------------------------------------------
+;;; PodDisruptionBudgets
+
+(defun k8s--insert-pdb-line (pdb)
+  (let* ((meta (cdr (assq 'metadata pdb)))
+         (spec (cdr (assq 'spec pdb)))
+         (status (cdr (assq 'status pdb)))
+         (name (cdr (assq 'name meta)))
+         (mn (or (cdr (assq 'minAvailable spec)) ""))
+         (mx (or (cdr (assq 'maxUnavailable spec)) ""))
+         (allowed (or (cdr (assq 'disruptionsAllowed status)) 0))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (poddisruptionbudget pdb t)
+      (magit-insert-heading
+        (format "  %-36s %-14s %-14s %12d  %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize (format "%s" mn) 'font-lock-face 'k8s-dim)
+                (propertize (format "%s" mx) 'font-lock-face 'k8s-dim)
+                allowed age)))))
+
+(k8s--define-view poddisruptionbudgets
+  "Major mode for PodDisruptionBudgets."
+  #'k8s-list-pdbs
+  (format "  %-36s %-14s %-14s %12s  %s\n"
+          "NAME" "MIN-AVAILABLE" "MAX-UNAVAIL." "ALLOWED-DIS" "AGE")
+  #'k8s--insert-pdb-line)
+
+;;; ---------------------------------------------------------------------------
+;;; PersistentVolumeClaims
+
+(defun k8s--insert-pvc-line (pvc)
+  (let* ((meta (cdr (assq 'metadata pvc)))
+         (spec (cdr (assq 'spec pvc)))
+         (status (cdr (assq 'status pvc)))
+         (name (cdr (assq 'name meta)))
+         (phase (or (cdr (assq 'phase status)) "?"))
+         (volume (or (cdr (assq 'volumeName spec)) ""))
+         (capacity (or (cdr (assq 'storage (cdr (assq 'capacity status))))
+                        (cdr (assq 'storage (cdr (assq 'requests (cdr (assq 'resources spec))))))
+                        "?"))
+         (sc (or (cdr (assq 'storageClassName spec)) ""))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (persistentvolumeclaim pvc t)
+      (magit-insert-heading
+        (format "  %-30s %-10s %-30s %-10s %-22s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize phase 'font-lock-face (k8s--phase-face phase))
+                (propertize volume 'font-lock-face 'k8s-dim)
+                (propertize capacity 'font-lock-face 'k8s-dim)
+                (propertize sc 'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view persistentvolumeclaims
+  "Major mode for PersistentVolumeClaims."
+  #'k8s-list-pvcs
+  (format "  %-30s %-10s %-30s %-10s %-22s %s\n"
+          "NAME" "STATUS" "VOLUME" "CAPACITY" "STORAGECLASS" "AGE")
+  #'k8s--insert-pvc-line)
+
+;;; ---------------------------------------------------------------------------
+;;; PersistentVolumes (cluster-scoped)
+
+(defun k8s--insert-pv-line (pv)
+  (let* ((meta (cdr (assq 'metadata pv)))
+         (spec (cdr (assq 'spec pv)))
+         (status (cdr (assq 'status pv)))
+         (name (cdr (assq 'name meta)))
+         (capacity (or (cdr (assq 'storage (cdr (assq 'capacity spec))))
+                        "?"))
+         (modes (cdr (assq 'accessModes spec)))
+         (am-str (mapconcat #'identity (append (or modes []) nil) ","))
+         (reclaim (or (cdr (assq 'persistentVolumeReclaimPolicy spec)) "?"))
+         (phase (or (cdr (assq 'phase status)) "?"))
+         (claim-ref (cdr (assq 'claimRef spec)))
+         (claim (if claim-ref
+                    (format "%s/%s"
+                            (cdr (assq 'namespace claim-ref))
+                            (cdr (assq 'name claim-ref)))
+                  ""))
+         (sc (or (cdr (assq 'storageClassName spec)) ""))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (persistentvolume pv t)
+      (magit-insert-heading
+        (format "  %-36s %-10s %-12s %-10s %-12s %-30s %-22s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize capacity 'font-lock-face 'k8s-dim)
+                (propertize am-str 'font-lock-face 'k8s-dim)
+                (propertize reclaim 'font-lock-face 'k8s-dim)
+                (propertize phase 'font-lock-face (k8s--phase-face phase))
+                (propertize claim 'font-lock-face 'k8s-dim)
+                (propertize sc 'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view persistentvolumes
+  "Major mode for PersistentVolumes (cluster-scoped)."
+  #'k8s-list-pvs
+  (format "  %-36s %-10s %-12s %-10s %-12s %-30s %-22s %s\n"
+          "NAME" "CAPACITY" "ACCESS" "RECLAIM" "STATUS" "CLAIM" "STORAGECLASS" "AGE")
+  #'k8s--insert-pv-line)
+
+;;; ---------------------------------------------------------------------------
+;;; StorageClasses (cluster-scoped)
+
+(defun k8s--insert-storageclass-line (sc)
+  (let* ((meta (cdr (assq 'metadata sc)))
+         (name (cdr (assq 'name meta)))
+         (provisioner (or (cdr (assq 'provisioner sc)) "?"))
+         (reclaim (or (cdr (assq 'reclaimPolicy sc)) "Delete"))
+         (binding (or (cdr (assq 'volumeBindingMode sc)) "Immediate"))
+         (allow-expand (cdr (assq 'allowVolumeExpansion sc)))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (storageclass sc t)
+      (magit-insert-heading
+        (format "  %-30s %-40s %-10s %-20s %-5s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize provisioner 'font-lock-face 'k8s-dim)
+                (propertize reclaim 'font-lock-face 'k8s-dim)
+                (propertize binding 'font-lock-face 'k8s-dim)
+                (propertize (if allow-expand "yes" "no") 'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view storageclasses
+  "Major mode for StorageClasses (cluster-scoped)."
+  #'k8s-list-storageclasses
+  (format "  %-30s %-40s %-10s %-20s %-5s %s\n"
+          "NAME" "PROVISIONER" "RECLAIM" "BINDING" "EXPAND" "AGE")
+  #'k8s--insert-storageclass-line)
+
+;;; ---------------------------------------------------------------------------
+;;; NetworkPolicies
+
+(defun k8s--insert-networkpolicy-line (np)
+  (let* ((meta (cdr (assq 'metadata np)))
+         (spec (cdr (assq 'spec np)))
+         (name (cdr (assq 'name meta)))
+         (pod-sel (cdr (assq 'matchLabels (cdr (assq 'podSelector spec)))))
+         (sel-str (if pod-sel
+                       (mapconcat (lambda (kv)
+                                    (format "%s=%s"
+                                            (let ((k (car kv)))
+                                              (if (symbolp k) (symbol-name k) k))
+                                            (cdr kv)))
+                                   pod-sel ",")
+                     "(all pods)"))
+         (types (cdr (assq 'policyTypes spec)))
+         (types-str (mapconcat #'identity (append (or types []) nil) "+"))
+         (age (k8s--age-string (cdr (assq 'creationTimestamp meta)))))
+    (magit-insert-section (networkpolicy np t)
+      (magit-insert-heading
+        (format "  %-36s %-50s %-14s %s\n"
+                (propertize name 'font-lock-face 'k8s-resource-name)
+                (propertize sel-str 'font-lock-face 'k8s-dim)
+                (propertize types-str 'font-lock-face 'k8s-dim)
+                age)))))
+
+(k8s--define-view networkpolicies
+  "Major mode for NetworkPolicies."
+  #'k8s-list-networkpolicies
+  (format "  %-36s %-50s %-14s %s\n"
+          "NAME" "POD-SELECTOR" "TYPES" "AGE")
+  #'k8s--insert-networkpolicy-line)
 
 ;;; ---------------------------------------------------------------------------
 ;;; Nodes (cluster-scoped — name/roles/status/version + live perf gauges)

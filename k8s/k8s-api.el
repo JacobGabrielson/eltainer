@@ -228,7 +228,25 @@ decoded kubelet Summary alist for NODE, or nil on failure."
     (ingresses    "/apis/networking.k8s.io/v1/ingresses"
                   "/apis/networking.k8s.io/v1/namespaces/%s/ingresses")
     (sandboxes    "/apis/agents.x-k8s.io/v1alpha1/sandboxes"
-                  "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes"))
+                  "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes")
+    (horizontalpodautoscalers
+     "/apis/autoscaling/v2/horizontalpodautoscalers"
+     "/apis/autoscaling/v2/namespaces/%s/horizontalpodautoscalers")
+    (poddisruptionbudgets
+     "/apis/policy/v1/poddisruptionbudgets"
+     "/apis/policy/v1/namespaces/%s/poddisruptionbudgets")
+    (persistentvolumes
+     "/api/v1/persistentvolumes"
+     "/api/v1/persistentvolumes")        ; cluster-scoped
+    (persistentvolumeclaims
+     "/api/v1/persistentvolumeclaims"
+     "/api/v1/namespaces/%s/persistentvolumeclaims")
+    (storageclasses
+     "/apis/storage.k8s.io/v1/storageclasses"
+     "/apis/storage.k8s.io/v1/storageclasses") ; cluster-scoped
+    (networkpolicies
+     "/apis/networking.k8s.io/v1/networkpolicies"
+     "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies"))
   "Alist mapping resource types (plural) to (ALL-PATH NAMESPACED-PATH-TEMPLATE).
 Keys are plural to match `k8s--define-view's macro name convention.")
 
@@ -277,7 +295,14 @@ the response."
     (configmap   . "/api/v1/namespaces/%s/configmaps/%s")
     (secret      . "/api/v1/namespaces/%s/secrets/%s")
     (ingress     . "/apis/networking.k8s.io/v1/namespaces/%s/ingresses/%s")
-    (sandbox     . "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes/%s"))
+    (sandbox     . "/apis/agents.x-k8s.io/v1alpha1/namespaces/%s/sandboxes/%s")
+    (horizontalpodautoscaler . "/apis/autoscaling/v2/namespaces/%s/horizontalpodautoscalers/%s")
+    (poddisruptionbudget . "/apis/policy/v1/namespaces/%s/poddisruptionbudgets/%s")
+    ;; Cluster-scoped: use `%2$s' so callers still pass (NAMESPACE NAME).
+    (persistentvolume . "/api/v1/persistentvolumes/%2$s")
+    (persistentvolumeclaim . "/api/v1/namespaces/%s/persistentvolumeclaims/%s")
+    (storageclass . "/apis/storage.k8s.io/v1/storageclasses/%2$s")
+    (networkpolicy . "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s"))
   "Alist mapping section types to API path templates (namespace, name).")
 
 (defun k8s-delete-resource (conn type namespace name)
@@ -475,6 +500,42 @@ not every kubeconfig has, and the kubelet may be unreachable."
 (defun k8s--extract-resource-version (response)
   "Return metadata.resourceVersion from a list RESPONSE."
   (cdr (assq 'resourceVersion (cdr (assq 'metadata response)))))
+
+(defun k8s-list-hpas (conn &optional namespace)
+  "List HorizontalPodAutoscalers via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/apis/autoscaling/v2/namespaces/%s/horizontalpodautoscalers" namespace)
+                "/apis/autoscaling/v2/horizontalpodautoscalers")))
+    (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-pdbs (conn &optional namespace)
+  "List PodDisruptionBudgets via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/apis/policy/v1/namespaces/%s/poddisruptionbudgets" namespace)
+                "/apis/policy/v1/poddisruptionbudgets")))
+    (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-pvs (conn &optional _namespace)
+  "List PersistentVolumes via CONN (cluster-scoped — NAMESPACE ignored)."
+  (cdr (assq 'items (k8s-get conn "/api/v1/persistentvolumes"))))
+
+(defun k8s-list-pvcs (conn &optional namespace)
+  "List PersistentVolumeClaims via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/api/v1/namespaces/%s/persistentvolumeclaims" namespace)
+                "/api/v1/persistentvolumeclaims")))
+    (cdr (assq 'items (k8s-get conn path)))))
+
+(defun k8s-list-storageclasses (conn &optional _namespace)
+  "List StorageClasses via CONN (cluster-scoped)."
+  (cdr (assq 'items (k8s-get conn "/apis/storage.k8s.io/v1/storageclasses"))))
+
+(defun k8s-list-networkpolicies (conn &optional namespace)
+  "List NetworkPolicies via CONN, optionally in NAMESPACE."
+  (let ((path (if namespace
+                  (format "/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies" namespace)
+                "/apis/networking.k8s.io/v1/networkpolicies")))
+    (cdr (assq 'items (k8s-get conn path)))))
 
 (defun k8s-list-events (conn namespace &optional field-selector)
   "List events in NAMESPACE via CONN, optionally filtered by FIELD-SELECTOR."

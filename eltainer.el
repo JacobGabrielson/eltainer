@@ -48,7 +48,13 @@
       ("o" "Nodes"         k8s-nodes)
       ("A" "Sandboxes"     k8s-sandboxes)
       ("H" "Helm releases" k8s-helm)
-      ("R" "Custom resources (CRDs)" k8s-crds))))
+      ("R" "Custom resources (CRDs)" k8s-crds)
+      ("h" "HPAs"          k8s-horizontalpodautoscalers)
+      ("b" "PDBs"          k8s-poddisruptionbudgets)
+      ("v" "PVCs"          k8s-persistentvolumeclaims)
+      ("V" "PVs"           k8s-persistentvolumes)
+      ("C" "StorageClasses" k8s-storageclasses)
+      ("n" "NetworkPolicies" k8s-networkpolicies))))
   "Dashboard entries.  Alist of (BACKEND-LABEL . ((KEY LABEL COMMAND) …)).
 `defconst' not `defvar' so editing this list and running
 `eltainer-reload' actually picks up the change — `defvar' is a

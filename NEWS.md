@@ -22,6 +22,25 @@ The per-CRD instance buffer's header now includes the active
 version (`Certificate.cert-manager.io/v1`) so you always know
 exactly which API you're hitting.
 
+### Resource coverage: PV / PVC / StorageClass / NetworkPolicy / HPA / PDB
+
+Six new read-only views land in the dashboard and the `?`
+resource-switcher:
+
+| Key (dashboard) | View                  | Scope       |
+|-----------------|-----------------------|-------------|
+| `v`             | PersistentVolumeClaims | namespaced |
+| `V`             | PersistentVolumes      | cluster     |
+| `C`             | StorageClasses         | cluster     |
+| `n`             | NetworkPolicies        | namespaced  |
+| `h`             | HorizontalPodAutoscalers | namespaced |
+| `b`             | PodDisruptionBudgets   | namespaced  |
+
+Each composes with the existing facilities — `g` to refresh, `F`
+to narrow by label / name, `Y` to edit, `d` to delete.
+Cluster-scoped resources (PV, StorageClass) render under a
+`<cluster>` group instead of a namespace group.
+
 ### Workload + node write actions
 
 | Key | Action | Targets |

@@ -32,17 +32,12 @@ the macro already handles refresh, watch, mode-line, the `?`
 dispatch transient, and the column header.  Each is roughly an
 afternoon.
 
-- **HPA view** (`HorizontalPodAutoscaler`) — current / target /
-  min / max replicas; very useful when debugging "why isn't this
-  pod scaling".  *(idea)*
-- **PDB view** (`PodDisruptionBudget`) — allowed disruptions vs
-  desired.  *(idea)*
-- **PV / PVC / StorageClass views** — storage objects.  PVC's
-  row should jump (via the existing `k8s-jump-target` mechanism)
-  to its bound PV.  *(idea)*
+- **HPA view** (`HorizontalPodAutoscaler`).  *(shipped 2026-05-27)*
+- **PDB view** (`PodDisruptionBudget`).  *(shipped 2026-05-27)*
+- **PV / PVC / StorageClass views** — storage objects.
+  *(shipped 2026-05-27)*  PVC -> PV jump target still pending.
 - **NetworkPolicy view** — read-only render of the selector +
-  ingress/egress rules.  Visualising flows is out of scope; a
-  textual table is enough.  *(idea)*
+  ingress/egress rules.  *(shipped 2026-05-27)*
 - **ResourceQuota / LimitRange views** — easy to render, often
   needed when a cluster "mysteriously" rejects creates.  *(idea)*
 - **RBAC views** — Roles, RoleBindings, ClusterRoles,
