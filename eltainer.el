@@ -41,7 +41,8 @@
       ("O" "Volumes"    docker-volumes)
       ("N" "Networks"   docker-networks)
       ("u" "Pull"       docker-pull-image)
-      ("M" "Build"      docker-build)))
+      ("M" "Build"      docker-build)
+      ("f" "Disk usage" docker-df)))
     ("Kubernetes" .
      (("P" "Pulse"         k8s-pulse)
       ("E" "Events"        k8s-events)

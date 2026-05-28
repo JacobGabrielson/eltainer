@@ -35,7 +35,8 @@
     "docker-create"
     "docker-volumes"
     "docker-build"
-    "docker-push")
+    "docker-push"
+    "docker-df")
   "Docker-side modules in load order (dependencies first).")
 
 (defconst eltainer-k8s-modules

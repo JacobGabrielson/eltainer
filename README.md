@@ -222,6 +222,7 @@ docker/
   docker-volumes.el      Volume browser + delete-with-confirm (`V')
   docker-build.el        Build an image; in-process recursive USTAR + /build
   docker-push.el         Push an image; `X-Registry-Auth' via docker-auth
+  docker-df.el           Disk-usage breakdown + per-section prune (`f')
   docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 

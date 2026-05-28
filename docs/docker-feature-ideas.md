@@ -149,7 +149,7 @@ container-create form (above).
 
 ---
 
-## Dockerfile lint / build-cache prune  *(idea, lower priority)*
+## Dockerfile lint / build-cache prune  *(`docker-df' shipped 2026-05-28; lint still idea)*
 
 Read-only: `M-x docker-system-df` shows the breakdown of disk used
 by images / containers / volumes / build cache, with a one-key

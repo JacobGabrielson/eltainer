@@ -11,6 +11,29 @@ the in-flight backlog.
 
 ---
 
+## 2026-05-28
+
+### Docker: Disk-usage view + per-section prune (`f` from dashboard)
+
+`*docker:df*` — eltainer's read-friendly take on `docker system
+df`.  Five sections: Images / Containers / Volumes / Build cache
+/ Networks.  Each shows total count, total size, and (where it
+applies) reclaimable bytes if you pruned it.
+
+`p` on a section prunes that category, with a confirm.  `P`
+(capital) does the more aggressive variant where one exists:
+
+| Section     | `p`                  | `P`                                |
+|-------------|----------------------|------------------------------------|
+| Images      | dangling only        | all unused (`{"dangling":["false"]}`) |
+| Containers  | stopped              |                                    |
+| Volumes     | unused               |                                    |
+| Build cache | old / unused layers  | `prune --all`                      |
+| Networks    | unused custom nets   |                                    |
+
+Reports `N objects pruned; reclaimed XX MB` on success.  `g`
+re-polls.
+
 ## 2026-05-27
 
 ### Docker: Volume browser (`V` from dashboard)

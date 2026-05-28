@@ -714,6 +714,7 @@ Tries `getent hosts' → `nslookup' → dump of `/etc/resolv.conf' +
 (autoload 'docker-build "docker-build" nil t)
 (autoload 'docker-image-push "docker-push" nil t)
 (autoload 'docker-image-push-at-point "docker-push" nil t)
+(autoload 'docker-df "docker-df" nil t)
 (keymap-set docker-images-mode-map "P" #'docker-image-push-at-point)
 (keymap-set docker-containers-mode-map "f" #'docker-dired-browse-at-point)
 (keymap-set docker-containers-mode-map "D" #'docker-container-dns-lookup-at-point)
