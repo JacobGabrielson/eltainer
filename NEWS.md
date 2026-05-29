@@ -11,7 +11,40 @@ the in-flight backlog.
 
 ---
 
+## 2026-05-29
+
+### Dev: Keymap audit (`make audit-keys`)
+
+`test/keymap-audit.el` walks every `*-mode-map` in the codebase
+and prints a construction-pattern survey, per-map binding list,
+and cross-mode drift table.  Run it from the shell with
+`make audit-keys` or interactively via `M-x keymap-audit`.
+
+Read alongside `docs/keymap-audit.md` for the curated triage of
+the report's flags (most "inconsistencies" are intentional —
+the dashboard's letter launchers vs. resource-view verbs, the
+dired/eltainer-dired override pattern, the per-view `g`-refresh
+overrides — and the doc names which is which).
+
+---
+
 ## 2026-05-28
+
+### Dashboard letter shuffles
+
+Three docker launchers were silently shadowed by their Kubernetes
+neighbours iterated after them: `S` (Stacks vs StatefulSets), `V`
+(Volumes vs PVs), `B` (Build vs PDBs).  Renamed:
+
+| Was | Now | Mnemonic              |
+|-----|-----|-----------------------|
+| `S` | `T` | s**T**acks            |
+| `V` | `O` | v**O**lumes           |
+| `B` | `M` | i**M**age build       |
+
+The dashboard now warns if two `eltainer-views` entries map to
+the same key, so a future repeat fails loudly instead of silently
+binding the second.
 
 ### Docker: Disk-usage view + per-section prune (`f` from dashboard)
 
@@ -36,7 +69,7 @@ re-polls.
 
 ## 2026-05-27
 
-### Docker: Volume browser (`V` from dashboard)
+### Docker: Volume browser (`O` from dashboard, originally `V`)
 
 `*docker:volumes*` lists every named volume on the daemon with
 NAME / DRIVER / SIZE / USED BY / CREATED, plus the mountpoint
@@ -45,7 +78,7 @@ by" column lists which containers mount the volume (resolved
 per-container).  `d` deletes (with confirm; engine refuses if
 in use and surfaces the error).
 
-### Docker: Image build (`B` from dashboard, `M-x docker-build`)
+### Docker: Image build (`M` from dashboard, originally `B`; `M-x docker-build`)
 
 `M-x docker-build' prompts for a context directory + optional
 `:tag', tars the context in pure Elisp (recursive walk, USTAR
@@ -89,7 +122,7 @@ Errors (image missing, bad JSON, port already bound, name
 collision) pop a `*docker:create:error*` buffer with the
 daemon's response so you can fix and retry.
 
-### Docker: Compose-stack view (`S` from dashboard)
+### Docker: Compose-stack view (`T` from dashboard, originally `S`)
 
 `*docker:stacks*` lists every Compose-managed stack on the
 daemon, grouped by the `com.docker.compose.project` label and

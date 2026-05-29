@@ -13,6 +13,50 @@ shell inside the container via HTTP Upgrade hijack of
 contexts the way `b` switches branches in magit.  No `docker` CLI
 or `kubectl` involved.*
 
+## Install
+
+Emacs **30+** required (see [Requirements](#requirements)).  The
+recommended setup is `use-package` with `:vc` for eltainer itself,
+plus MELPA / NonGNU ELPA for the Elisp dependencies.
+
+```elisp
+(require 'package)
+(add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/"))
+(add-to-list 'package-archives '("nongnu" . "https://elpa.nongnu.org/nongnu/"))
+(package-initialize)
+(unless package-archive-contents (package-refresh-contents))
+
+;; Make sure `use-package' itself is available.
+(unless (package-installed-p 'use-package)
+  (package-install 'use-package))
+
+;; Dependencies — MELPA for magit-section + transient, NonGNU ELPA for eat.
+(use-package magit-section :ensure t)
+(use-package transient     :ensure t)
+(use-package eat           :ensure t)
+
+;; eltainer itself, tracked from GitHub via `package-vc'.
+(use-package eltainer
+  :vc (:url "https://github.com/JacobGabrielson/eltainer" :rev :newest)
+  :commands (eltainer docker k8s))
+```
+
+`:rev :newest` follows the default branch.  Pin to a specific
+tag or SHA with `:rev "v1.0.0"` if you'd rather track a release.
+
+To pull the latest changes later:
+
+    M-x package-vc-upgrade RET eltainer RET
+
+…or `M-x package-vc-upgrade-all` to refresh every `:vc`-installed
+package at once.
+
+Then any of:
+
+    M-x eltainer    ; dashboard listing every view + active context
+    M-x docker      ; jump straight to docker containers
+    M-x k8s         ; jump straight to k8s pods
+
 ## Philosophy
 
 **Pure Elisp talking directly to the daemon.**
@@ -39,9 +83,14 @@ transport, `docker-credential-*` helpers, and Kubernetes
 | Backend | Key | View |
 |---------|-----|------|
 | Docker | `c` | Containers (running; `a` toggles all) |
+| Docker | `T` | Compose stacks (grouped by project label) |
+| Docker | `p` | Pulse (single-host dashboard) |
 | Docker | `I` | Images |
+| Docker | `O` | Volumes |
 | Docker | `N` | Networks (+ connected containers) |
 | Docker | `u` | Pull image (streamed per-layer progress) |
+| Docker | `M` | Build image from a Dockerfile context |
+| Docker | `f` | Disk usage + per-section prune |
 | Kubernetes | `k` | Pods grouped by namespace |
 | Kubernetes | `d` | Deployments |
 | Kubernetes | `s` | Services |
@@ -78,6 +127,9 @@ dashboard if that's what you want.
 | `D` | DNS lookup from inside the container (`getent` → `nslookup` → `/etc/resolv.conf`+`/etc/hosts`) |
 | `M` | Per-container metrics buffer (containers view) |
 | `j` `J` | Join / leave a network |
+| `+` | New-container form (containers view; JSON template → POST `/containers/create` + start) |
+| `P` | Push image to its registry (images view; uses `~/.docker/config.json` auth) |
+| `p` `P` | Prune this section (disk-usage view); capital does the more aggressive variant where one exists |
 
 Views auto-refresh as the daemon's `/events` stream tells us what
 changed (debounced).  The TTY exec lands in an
@@ -219,10 +271,10 @@ docker/
   docker-stacks.el       Read-only Compose-stack view (group by project label)
   docker-pulse.el        Single-host docker pulse dashboard
   docker-create.el       Create + start a container from a JSON template (`+')
-  docker-volumes.el      Volume browser + delete-with-confirm (`V')
-  docker-build.el        Build an image; in-process recursive USTAR + /build
-  docker-push.el         Push an image; `X-Registry-Auth' via docker-auth
-  docker-df.el           Disk-usage breakdown + per-section prune (`f')
+  docker-volumes.el      Volume browser + delete-with-confirm (`O' on dashboard)
+  docker-build.el        Build an image; in-process recursive USTAR + /build (`M' on dashboard)
+  docker-push.el         Push an image; `X-Registry-Auth' via docker-auth (`P' in the images view)
+  docker-df.el           Disk-usage breakdown + per-section prune (`f' on dashboard)
   docker-metrics.el      Container /stats gauges: cpu / mem / io / net / pids
   docker.el              magit-section views + transient + actions
 
@@ -282,24 +334,21 @@ k8s/
 See [`NEWS.md`](NEWS.md) for a reverse-chronological log of
 user-visible changes (new keys, new views, UX shifts).
 
-## Quick start
+## Hacking
+
+For a development checkout (rather than a `package-vc` install), clone
+somewhere and add it to `load-path`:
 
 ```elisp
 (add-to-list 'load-path "/path/to/eltainer")
 (require 'eltainer)
-
-;; Then any of:
-;;   M-x eltainer          ; dashboard listing every view + active context
-;;   M-x docker            ; jump straight to docker containers
-;;   M-x k8s               ; jump straight to k8s pods
-```
-
-For development:
-
-```elisp
 (load "/path/to/eltainer/reload.el")
 ;; M-x eltainer-reload       ; byte-compile + reload + re-enter open buffers
 ```
+
+`reload.el` only recompiles modules whose `.el` is newer than its
+`.elc`, then reloads every module in dependency order; the
+dashboard's `g` picks up new launchers without restarting Emacs.
 
 ## Tests
 
@@ -309,10 +358,12 @@ hit a real Docker daemon / kubeconfig and `skip-unless` cleanly when
 neither is reachable.
 
 ```
-make test       # pure-Elisp unit tests only (parsers, path arithmetic,
-                # the `-F'-listing-switches regression, USTAR header parsing)
-make test-all   # everything, including live-daemon + live-cluster integration
-make compile    # clean + byte-compile every .el (no tests; CI sanity check)
+make test         # pure-Elisp unit tests only (parsers, path arithmetic,
+                  # the `-F'-listing-switches regression, USTAR header parsing)
+make test-all     # everything, including live-daemon + live-cluster integration
+make compile      # clean + byte-compile every .el (no tests; CI sanity check)
+make audit-keys   # construction-pattern survey + cross-mode key-drift report
+                  # (read alongside `docs/keymap-audit.md')
 ```
 
 Add a test whenever you change JSON parsing, magit-section rendering,
