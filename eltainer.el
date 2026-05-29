@@ -645,13 +645,13 @@ callers."
 ;;; ---------------------------------------------------------------------------
 ;;; Key-hints registrations + auto-enable
 ;;
-;; Registers curated hint sets for the most-used eltainer views, then
-;; turns on the global `key-hints-mode'.  The strip renders in the
-;; mode-line by default; users who don't want it can
-;;   (setq key-hints-position 'side-window)        ; 1-line bottom strip
-;; or
-;;   (key-hints-mode -1)                           ; off entirely
-;; after `(require 'eltainer)'.
+;; Registers curated hint sets for the most-used eltainer views,
+;; then turns on the global `key-hints-mode'.  The strip renders
+;; in a 1-line side window pinned to the bottom of the frame; it
+;; auto-hides in any buffer that didn't register hints (so the bar
+;; only appears in eltainer views, not in scratch / source files).
+;; Users who don't want it can `(key-hints-mode -1)' after
+;; `(require 'eltainer)'.
 
 (require 'key-hints)
 
@@ -691,7 +691,9 @@ callers."
    '(("p" "prune"  10) ("P" "prune!"  7) ("g" "refresh" 3))))
 
 ;; Default on.  Users who don't want it can `(key-hints-mode -1)' after
-;; loading eltainer.
+;; loading eltainer.  Toggle off-then-on so a reload re-runs the install
+;; path (otherwise `key-hints-mode' is already `t' and the body skips).
+(when (bound-and-true-p key-hints-mode) (key-hints-mode -1))
 (key-hints-mode 1)
 
 (provide 'eltainer)

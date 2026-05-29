@@ -108,25 +108,32 @@ dashboard if that's what you want.
 
 ### Always-visible key hints
 
-`key-hints-mode` is on by default — every eltainer view shows a
-compact "what can I do here" strip in the mode-line.  For example
-on the dashboard you'll see `c ps  k pods  b ctx  I images  T
-stacks  o nodes +3`, on the pods view `l logs  e exec  f browse
-M metric  K kill  N ns +2`, etc.  Trailing `+N` is the count of
-additional keys that didn't fit; press `?` for the full transient
-menu.
+`key-hints-mode` is on by default — eltainer views show a compact
+"what can I do here" strip in a 1-line side window pinned to the
+bottom of the frame.  The window auto-hides in any buffer that
+didn't register hints, so the bar only appears where it's useful.
 
-Customise via `M-x customize-group RET key-hints RET`.  Switch to
-a 1-line side window at the bottom of the frame:
+Examples:
 
-    (setq key-hints-position 'side-window)
+| Buffer                | Strip                                            |
+|-----------------------|--------------------------------------------------|
+| `*eltainer*`          | `c ps  k pods  b ctx  I images  T stacks  o nodes  p pulse  f disk +1` |
+| `*k8s:pods*`          | `l logs  e exec  f browse  M metric  K kill  N ns  Y edit  T xray` |
+| `*docker:containers*` | `e exec  l logs  f browse  M metric  K kill  + create  d rm` |
+| `*docker:df*`         | `p prune  P prune!  g refresh`                  |
+
+Trailing `+N` is the count of additional keys that didn't fit;
+press `?` for the full transient menu.
 
 Off entirely:
 
     (key-hints-mode -1)
 
-Modes without a curated entry get an auto-extracted fallback by
-walking the major-mode keymap.
+Universal (also show auto-extracted hints in non-eltainer modes):
+
+    (setq key-hints-restrict-to-registered nil)
+
+Full customisation: `M-x customize-group RET key-hints RET`.
 
 ### Inside any docker view
 

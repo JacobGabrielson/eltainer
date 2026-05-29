@@ -9,14 +9,11 @@
 
 ;;; Commentary:
 
-;; `key-hints-mode' is a global minor mode that always shows a
-;; compact "what can I do here" strip — like having `?'
-;; permanently pressed.  Two backends:
-;;
-;; - `mode-line' (default): inline `:eval' segment in the mode-line.
-;;   Zero new pixels.
-;; - `side-window': a 1-line side window pinned to the bottom of the
-;;   frame.  Roomier, but eats a line.
+;; `key-hints-mode' is a global minor mode that shows a compact
+;; "what can I do here" strip in a 1-line side window pinned to
+;; the bottom of the frame — like having `?' permanently pressed.
+;; The window auto-hides in buffers with nothing to render, so it
+;; only takes a line where it's useful.
 ;;
 ;; Source of truth, in priority order:
 ;;
@@ -24,12 +21,13 @@
 ;;    Lets section-aware UIs (eltainer's pods view, magit) pick the
 ;;    right cheat for the section under point.
 ;; 2. A per-major-mode registry populated via `key-hints-register'.
-;;    For richer / curated hints.
-;; 3. Auto-extraction from the major-mode keymap as a fallback.  Walks
+;;    For curated hints.
+;; 3. Auto-extraction from the major-mode keymap as an opt-in
+;;    fallback (`key-hints-restrict-to-registered' = nil).  Walks
 ;;    single-key bindings, annotates with the docstring's first line.
 ;;
-;; Items are `(KEY LABEL [PRIORITY])'; priority 5 is the default, higher
-;; floats to the left.  When the strip would overflow
+;; Items are `(KEY LABEL [PRIORITY])'; priority 5 is the default,
+;; higher floats to the left.  When the strip would overflow
 ;; `key-hints-max-items', the rightmost items drop first and a `+N'
 ;; indicator shows how many were hidden.
 
@@ -45,24 +43,12 @@
 ;;; ---------------------------------------------------------------------------
 ;;; Customize surface
 
-(defcustom key-hints-position 'mode-line
-  "Where to render the key-hints strip.
-- `mode-line' (default): inline as an `:eval' segment.
-- `side-window': a 1-line side window at the bottom of the frame."
-  :type '(choice (const :tag "Mode-line :eval segment" mode-line)
-                 (const :tag "1-line side window" side-window))
-  :group 'key-hints
-  :set (lambda (sym val)
-         (set-default sym val)
-         (when (bound-and-true-p key-hints-mode)
-           (key-hints--reinstall))))
-
-(defcustom key-hints-max-items 6
+(defcustom key-hints-max-items 8
   "Maximum number of items rendered before showing `+N'."
   :type 'integer
   :group 'key-hints)
 
-(defcustom key-hints-truncate-label-width 8
+(defcustom key-hints-truncate-label-width 10
   "Per-label maximum character width.  Labels longer than this are
 truncated."
   :type 'integer
@@ -74,8 +60,7 @@ truncated."
   :group 'key-hints)
 
 (defcustom key-hints-side-window-height 1
-  "Height of the side window (lines) when `key-hints-position' is
-`side-window'."
+  "Height of the side window (lines)."
   :type 'integer
   :group 'key-hints)
 
@@ -86,9 +71,7 @@ truncated."
     Buffer-menu-mode
     image-mode
     fundamental-mode)
-  "Major modes in which the strip is suppressed.
-Either no useful keys (`fundamental-mode'), or the mode-line /
-buffer is already special-cased and shouldn't carry extras."
+  "Major modes in which the strip is suppressed."
   :type '(repeat symbol)
   :group 'key-hints)
 
@@ -101,6 +84,19 @@ Empty list (default) means \"all modes except `key-hints-hide-modes'\"."
 (defcustom key-hints-default-priority 5
   "Priority assigned to items that don't specify one."
   :type 'integer
+  :group 'key-hints)
+
+(defcustom key-hints-restrict-to-registered t
+  "If non-nil, only render hints in modes that explicitly registered.
+That's the default: with eltainer loaded, the strip only shows in
+the dashboard / pods / containers / etc.  Buffers in modes with no
+`key-hints-register' entry stay quiet (and the side window
+auto-hides).
+
+Set to nil to fall back to auto-extracted hints — single-key
+bindings from the major-mode keymap with docstring-derived
+labels — in modes that didn't register.  Universal but noisier."
+  :type 'boolean
   :group 'key-hints)
 
 ;;; ---------------------------------------------------------------------------
@@ -166,6 +162,12 @@ an integer where higher floats left (default
                                  (symbol-name cmd))))
      (t ""))))
 
+(defconst key-hints--auto-extract-boring-keys
+  '(?? ?/)
+  "Keys filtered from auto-extract: by convention always
+\"show me help\" — that IS the strip; including them is
+both noisy and circular.")
+
 (defun key-hints--auto-extract (mode)
   "Walk MODE's `*-map' for single-key bindings and synthesise hints."
   (let* ((map-sym (intern-soft (format "%s-map" mode)))
@@ -179,9 +181,14 @@ an integer where higher floats left (default
          (when (and (characterp event)
                     (or (and (>= event ?a) (<= event ?z))
                         (and (>= event ?A) (<= event ?Z))
-                        (memq event '(?+ ?- ?? ?! ?/)))
+                        (memq event '(?+ ?- ?!)))
+                    (not (memq event key-hints--auto-extract-boring-keys))
                     (symbolp def)
                     (not (memq def key-hints--boring-commands))
+                    (not (memq def '(describe-mode
+                                     docker-dispatch
+                                     k8s-dispatch
+                                     eltainer-filter-dispatch)))
                     (not (eq def 'undefined)))
            (push (list (key-description (vector event))
                        (key-hints--cmd-label def)
@@ -205,7 +212,8 @@ an integer where higher floats left (default
     (if (<= (length s) w) s (substring s 0 w))))
 
 (defun key-hints--items ()
-  "Resolve the item list for the current buffer."
+  "Resolve the item list for the current buffer.
+Returns nil (= suppress strip) when nothing applies."
   (or (and key-hints-context-function
            (ignore-errors (funcall key-hints-context-function)))
       (let ((registered (gethash major-mode key-hints--registry)))
@@ -214,7 +222,9 @@ an integer where higher floats left (default
                    (lambda (a b)
                      (> (or (nth 2 a) key-hints-default-priority)
                         (or (nth 2 b) key-hints-default-priority))))))
-      (key-hints--auto-extract major-mode)))
+      ;; Auto-extract only when the user opted in.
+      (and (not key-hints-restrict-to-registered)
+           (key-hints--auto-extract major-mode))))
 
 (defun key-hints--render (items)
   "Render ITEMS to a propertised string with the `+N' overflow marker."
@@ -234,35 +244,22 @@ an integer where higher floats left (default
        (propertize (format " +%d" extra) 'face 'shadow)))))
 
 (defun key-hints--current-string ()
-  "Build (or fetch from cache) the hint string for the current buffer."
+  "Build (or fetch from cache) the hint string for the current buffer.
+Returns nil when there's nothing to render — caller treats that
+as \"hide the side window\"."
   (when (key-hints--applicable-p)
     (let ((cache-key (list major-mode
                            key-hints--registry-generation
+                           key-hints-restrict-to-registered
                            key-hints-max-items
                            key-hints-truncate-label-width
                            key-hints-context-function)))
       (or (gethash cache-key key-hints--cache)
-          (let ((rendered (key-hints--render (key-hints--items))))
-            ;; Only cache when there's no context-function — otherwise
-            ;; different sections in the same mode would all share one
-            ;; cached string.
+          (let* ((items (key-hints--items))
+                 (rendered (and items (key-hints--render items))))
             (unless key-hints-context-function
               (puthash cache-key rendered key-hints--cache))
             rendered)))))
-
-;;; ---------------------------------------------------------------------------
-;;; Mode-line backend
-
-(defvar key-hints--mode-line-segment
-  '(:eval (or (key-hints--current-string) ""))
-  "The `:eval' element added to `mode-line-misc-info'.")
-
-(defun key-hints--install-mode-line ()
-  (add-to-list 'mode-line-misc-info key-hints--mode-line-segment t))
-
-(defun key-hints--uninstall-mode-line ()
-  (setq mode-line-misc-info
-        (delete key-hints--mode-line-segment mode-line-misc-info)))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Side-window backend
@@ -270,17 +267,20 @@ an integer where higher floats left (default
 (defconst key-hints--buffer-name " *key-hints*"
   "Side-window buffer name.  Leading space hides it from `M-x list-buffers'.")
 
-(defvar key-hints--last-side-window-string nil
+(defvar key-hints--last-string nil
   "Last rendered string — skip repaint when unchanged.")
+
+(defvar key-hints--last-window-buffer nil
+  "Buffer the strip was last rendered for — re-render on focus change.")
 
 (defun key-hints--side-window-buffer ()
   (or (get-buffer key-hints--buffer-name)
       (with-current-buffer (get-buffer-create key-hints--buffer-name)
-        (setq mode-line-format nil
-              header-line-format nil
-              cursor-type nil
-              truncate-lines t)
-        (setq-local mode-line-format nil)
+        (setq-local mode-line-format nil
+                    header-line-format nil
+                    cursor-type nil
+                    truncate-lines t
+                    show-trailing-whitespace nil)
         (current-buffer))))
 
 (defun key-hints--display-side-window (buf)
@@ -296,63 +296,92 @@ an integer where higher floats left (default
          (no-delete-other-windows . t)
          (mode-line-format . none))))))
 
-(defun key-hints--update-side-window ()
-  (when (and (bound-and-true-p key-hints-mode)
-             (eq key-hints-position 'side-window))
-    (let* ((str (or (key-hints--current-string) ""))
-           (buf (key-hints--side-window-buffer)))
-      (unless (string= str key-hints--last-side-window-string)
-        (setq key-hints--last-side-window-string str)
-        (with-current-buffer buf
-          (let ((inhibit-read-only t))
-            (erase-buffer)
-            (insert str))))
-      (unless (get-buffer-window buf t)
-        (key-hints--display-side-window buf)))))
-
-(defun key-hints--remove-side-window ()
+(defun key-hints--hide-side-window ()
   (let ((buf (get-buffer key-hints--buffer-name)))
     (when buf
       (dolist (win (get-buffer-window-list buf nil t))
-        (delete-window win))
-      (kill-buffer buf))
-    (setq key-hints--last-side-window-string nil)))
+        (delete-window win)))))
 
-(defun key-hints--post-command ()
-  (when (eq key-hints-position 'side-window)
-    (key-hints--update-side-window)))
+(defun key-hints--refresh ()
+  "Render the current buffer's hints into the side window — or hide it."
+  (when (bound-and-true-p key-hints-mode)
+    ;; Don't react inside the strip's own buffer or the minibuffer.
+    (unless (or (eq (current-buffer) (get-buffer key-hints--buffer-name))
+                (window-minibuffer-p))
+      (let ((str (key-hints--current-string))
+            (cur (current-buffer)))
+        (cond
+         ((or (null str) (string-empty-p str))
+          (when (or (not (eq cur key-hints--last-window-buffer))
+                    key-hints--last-string)
+            (setq key-hints--last-string nil
+                  key-hints--last-window-buffer cur)
+            (key-hints--hide-side-window)))
+         (t
+          (let ((buf (key-hints--side-window-buffer)))
+            (unless (and (string= str key-hints--last-string)
+                         (eq cur key-hints--last-window-buffer))
+              (setq key-hints--last-string str
+                    key-hints--last-window-buffer cur)
+              (with-current-buffer buf
+                (let ((inhibit-read-only t))
+                  (erase-buffer)
+                  (insert str))))
+            (unless (get-buffer-window buf t)
+              (key-hints--display-side-window buf)))))))))
+
+(defun key-hints--remove-side-window ()
+  "Tear down the strip completely (hide window + kill buffer)."
+  (key-hints--hide-side-window)
+  (when-let ((buf (get-buffer key-hints--buffer-name)))
+    (kill-buffer buf))
+  (setq key-hints--last-string nil
+        key-hints--last-window-buffer nil))
 
 ;;; ---------------------------------------------------------------------------
 ;;; Global minor mode
 
-(defun key-hints--reinstall ()
-  "Install / re-install the active backend (called on enable + on position toggle)."
-  (key-hints--uninstall-mode-line)
-  (key-hints--remove-side-window)
-  (remove-hook 'post-command-hook #'key-hints--post-command)
-  (when (bound-and-true-p key-hints-mode)
-    (pcase key-hints-position
-      ('mode-line   (key-hints--install-mode-line))
-      ('side-window
-       (add-hook 'post-command-hook #'key-hints--post-command)
-       (key-hints--update-side-window))))
+(defun key-hints--clean-legacy ()
+  "Remove any stale entries from a previous (mode-line backend)
+version of this file from `mode-line-misc-info'.  Idempotent and
+cheap; safe to call on every mode toggle."
+  (setq mode-line-misc-info
+        (cl-remove-if
+         (lambda (item)
+           (and (consp item)
+                (eq (car-safe item) :eval)
+                (string-match-p "key-hints--current-string"
+                                (format "%S" item))))
+         mode-line-misc-info))
   (force-mode-line-update t))
 
 ;;;###autoload
 (define-minor-mode key-hints-mode
-  "Show a compact, contextual key-hint strip.
-Renders into the mode-line by default; flip `key-hints-position'
-to `side-window' for a roomier 1-line strip at the bottom of the
-frame.
+  "Show a compact contextual key-hint strip in a 1-line side
+window at the bottom of the frame.  The window auto-hides in
+buffers with nothing to render.
 
 Items come from (in order): a buffer-local
 `key-hints-context-function', a per-major-mode registry populated
-via `key-hints-register', and an auto-extracted fallback that
-walks the major-mode keymap."
+via `key-hints-register', and — when
+`key-hints-restrict-to-registered' is nil — an auto-extracted
+fallback walking the major-mode keymap."
   :global t
   :init-value nil
   :group 'key-hints
-  (key-hints--reinstall))
+  (key-hints--clean-legacy)
+  (cond
+   (key-hints-mode
+    (add-hook 'post-command-hook #'key-hints--refresh)
+    (add-hook 'window-buffer-change-functions #'key-hints--on-buffer-change)
+    (key-hints--refresh))
+   (t
+    (remove-hook 'post-command-hook #'key-hints--refresh)
+    (remove-hook 'window-buffer-change-functions #'key-hints--on-buffer-change)
+    (key-hints--remove-side-window))))
+
+(defun key-hints--on-buffer-change (_frame)
+  (key-hints--refresh))
 
 (provide 'key-hints)
 ;;; key-hints.el ends here
