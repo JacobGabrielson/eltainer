@@ -1,6 +1,10 @@
 # Plan: always-visible "what can I do here" key hints
 
-Status: **proposal** — review before coding.
+Status: **shipped** 2026-05-29 — v1 lives in `key-hints.el`.
+Curated registrations for the dashboard, k8s-pods, docker-containers,
+docker-images, docker-networks, docker-df.  Section-aware
+`key-hints-context-function' wiring (§2c) and the `?`-dispatch
+refactor (§6 step 4) are deferred to v2.
 
 ## Goal
 

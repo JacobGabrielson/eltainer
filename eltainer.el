@@ -642,5 +642,57 @@ callers."
 ;; because the module only references k8s-* commands via autoload.
 (require 'k8s-bookmarks)
 
+;;; ---------------------------------------------------------------------------
+;;; Key-hints registrations + auto-enable
+;;
+;; Registers curated hint sets for the most-used eltainer views, then
+;; turns on the global `key-hints-mode'.  The strip renders in the
+;; mode-line by default; users who don't want it can
+;;   (setq key-hints-position 'side-window)        ; 1-line bottom strip
+;; or
+;;   (key-hints-mode -1)                           ; off entirely
+;; after `(require 'eltainer)'.
+
+(require 'key-hints)
+
+;; Dashboard — the launchers users open the tool to reach.
+(key-hints-register
+ 'eltainer-mode
+ '(("c" "ps"      10) ("k" "pods"    10) ("b" "ctx"      8)
+   ("I" "images"   6) ("T" "stacks"   6) ("o" "nodes"    6)
+   ("p" "pulse"    5) ("f" "disk"     4) ("g" "refresh"  3)))
+
+;; Pods view — l/e/f/M are the headline pod actions.
+(with-eval-after-load 'k8s-pods
+  (key-hints-register
+   'k8s-pods-mode
+   '(("l" "logs"   10) ("e" "exec"   10) ("f" "browse" 7)
+     ("M" "metric"  7) ("K" "kill"    6) ("N" "ns"     5)
+     ("Y" "edit"    3) ("T" "xray"    3))))
+
+;; Containers view — exec / logs / browse / metrics, plus + for create.
+(with-eval-after-load 'docker
+  (key-hints-register
+   'docker-containers-mode
+   '(("e" "exec"   10) ("l" "logs"   10) ("f" "browse" 7)
+     ("M" "metric"  7) ("K" "kill"    6) ("+" "create" 5)
+     ("d" "rm"      3)))
+  (key-hints-register
+   'docker-images-mode
+   '(("P" "push"    7) ("d" "rm"      5) ("i" "inspect" 3)))
+  (key-hints-register
+   'docker-networks-mode
+   '(("i" "inspect" 5) ("d" "rm"      5))))
+
+;; df view — `p' / `P' for per-section prune.
+(with-eval-after-load 'docker-df
+  (key-hints-register
+   'docker-df-mode
+   '(("p" "prune"  10) ("P" "prune!"  7) ("g" "refresh" 3))))
+
+;; Default on.  Users who don't want it can `(key-hints-mode -1)' after
+;; loading eltainer.
+(key-hints-mode 1)
+
 (provide 'eltainer)
 ;;; eltainer.el ends here

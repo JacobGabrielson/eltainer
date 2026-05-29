@@ -150,7 +150,8 @@ something now stale."
                   ('reloaded   (cl-incf reloaded))
                   ('error      (push mod errors)))))
       ;; Top-level shared modules first.
-      (dolist (mod '("eltainer-ui" "eltainer-gauge" "eltainer-fs"
+      (dolist (mod '("key-hints"
+                     "eltainer-ui" "eltainer-gauge" "eltainer-fs"
                      "eltainer-dired" "eltainer-net" "eltainer-filter"
                      "eltainer-terminal" "eltainer-shell-helper"))
         (step (expand-file-name (concat mod ".el") eltainer--source-dir)

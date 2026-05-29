@@ -13,6 +13,40 @@ the in-flight backlog.
 
 ## 2026-05-29
 
+### Always-visible key-hint strip (`key-hints-mode`)
+
+A compact "what can I do here" strip is now always visible —
+like having `?` permanently pressed, but fast and unobtrusive.
+On by default; renders into the mode-line.
+
+Examples of what shows in the mode-line:
+
+| Buffer            | Strip                                                |
+|-------------------|------------------------------------------------------|
+| `*eltainer*`      | `c ps  k pods  b ctx  I images  T stacks  o nodes +3` |
+| `*k8s:pods*`      | `l logs  e exec  f browse  M metric  K kill  N ns +2` |
+| `*docker:containers*` | `e exec  l logs  f browse  M metric  K kill  + create +1` |
+| `*docker:df*`     | `p prune  P prune!  g refresh`                       |
+
+The trailing `+N` is the count of additional keys the strip
+didn't have room for; press `?` for the full transient menu.
+
+Customisation via `M-x customize-group RET key-hints RET`:
+
+| Knob                            | Default     | What                                |
+|---------------------------------|-------------|-------------------------------------|
+| `key-hints-position`            | `mode-line` | `mode-line' or `side-window' (1-line strip at the bottom of the frame) |
+| `key-hints-max-items`           | 6           | items rendered before the `+N' badge |
+| `key-hints-truncate-label-width`| 8           | per-label max chars                 |
+| `key-hints-hide-modes`          | …           | modes where the strip is suppressed  |
+
+Buffers in modes that don't carry a curated entry get an
+auto-extracted fallback (single-key bindings from the major-mode
+keymap, annotated with the docstring's first line) — usable in
+dired, occur, etc.
+
+To turn off: `(key-hints-mode -1)` after `(require 'eltainer)`.
+
 ### Dev: Keymap audit (`make audit-keys`)
 
 `test/keymap-audit.el` walks every `*-mode-map` in the codebase

@@ -106,6 +106,28 @@ transport, `docker-credential-*` helpers, and Kubernetes
 `M-x docker` and `M-x k8s` still work directly and bypass the
 dashboard if that's what you want.
 
+### Always-visible key hints
+
+`key-hints-mode` is on by default — every eltainer view shows a
+compact "what can I do here" strip in the mode-line.  For example
+on the dashboard you'll see `c ps  k pods  b ctx  I images  T
+stacks  o nodes +3`, on the pods view `l logs  e exec  f browse
+M metric  K kill  N ns +2`, etc.  Trailing `+N` is the count of
+additional keys that didn't fit; press `?` for the full transient
+menu.
+
+Customise via `M-x customize-group RET key-hints RET`.  Switch to
+a 1-line side window at the bottom of the frame:
+
+    (setq key-hints-position 'side-window)
+
+Off entirely:
+
+    (key-hints-mode -1)
+
+Modes without a curated entry get an auto-extracted fallback by
+walking the major-mode keymap.
+
 ### Inside any docker view
 
 | Key | Action |
@@ -248,6 +270,7 @@ eltainer-net.el          Shared DNS-lookup chain (getent / nslookup / fallback)
 eltainer-filter.el       View-narrowing layer (label selector + name regex)
 eltainer-terminal.el     eat-backed terminal host for interactive exec
 eltainer-shell-helper.el Invoke external helpers (cred / exec plugins)
+key-hints.el             Always-visible mode-line / side-window key-hint strip
 reload.el                Dev helper: byte-compile + reload both halves
 
 docker/
