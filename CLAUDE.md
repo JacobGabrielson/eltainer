@@ -165,6 +165,33 @@ the same reason: they won't get re-applied.
 If you find a bug where "I edited the file and reloaded and nothing
 changed," the first suspect is a stale `defvar`.
 
+## `Package-Requires:` must stay current
+
+`eltainer.el`'s header carries the package's `Package-Requires:`
+list — that's what `package-vc-install` (and `use-package :vc`)
+reads to pull in deps automatically.  The README's install
+recipe relies on it.  Keep it accurate:
+
+- When a new `(require 'foo)` for an external Emacs package
+  lands anywhere in the source tree, add `(foo "X.Y.Z")` to
+  `Package-Requires:` — the floor version should be whatever's
+  currently shipping on MELPA / NonGNU ELPA / GNU ELPA.
+- When the last use of a package goes away, drop the entry.
+- If the minimum Emacs version moves (a new built-in feature
+  used, a tree-sitter API, etc.), bump the `(emacs "X.Y")` entry.
+- Bump the package's own `Version:` header on a user-visible
+  shipping change too.  This is the version `package-vc` shows
+  in `M-x list-packages`; it's also what users pin against if
+  they prefer `:rev "v0.2.0"` over `:rev :newest`.
+
+If unsure of the floor version: check
+`~/.emacs.d/elpa/<pkg>-*/` for the version currently installed,
+and use that as the floor (older floors are fine too; newer
+floors will refuse installs that would otherwise work).
+
+This goes hand-in-hand with the `Requirements` block in
+`README.md` — they should never drift apart.
+
 ## Plan docs for non-trivial features
 
 For anything beyond a bug fix or a one-line tweak, get the design

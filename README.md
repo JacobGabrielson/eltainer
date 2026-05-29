@@ -16,30 +16,29 @@ or `kubectl` involved.*
 ## Install
 
 Emacs **30+** required (see [Requirements](#requirements)).  The
-recommended setup is `use-package` with `:vc` for eltainer itself,
-plus MELPA / NonGNU ELPA for the Elisp dependencies.
+recommended setup is `use-package` with `:vc` — the package's
+declared `Package-Requires:` (Emacs 30.1, `magit-section`,
+`transient`, `eat`) is resolved by `package-vc` automatically
+from your configured archives, so a single block does it all:
 
 ```elisp
 (require 'package)
-(add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/"))
+(add-to-list 'package-archives '("melpa"  . "https://melpa.org/packages/"))
 (add-to-list 'package-archives '("nongnu" . "https://elpa.nongnu.org/nongnu/"))
 (package-initialize)
 (unless package-archive-contents (package-refresh-contents))
 
-;; Make sure `use-package' itself is available.
 (unless (package-installed-p 'use-package)
   (package-install 'use-package))
 
-;; Dependencies — MELPA for magit-section + transient, NonGNU ELPA for eat.
-(use-package magit-section :ensure t)
-(use-package transient     :ensure t)
-(use-package eat           :ensure t)
-
-;; eltainer itself, tracked from GitHub via `package-vc'.
 (use-package eltainer
   :vc (:url "https://github.com/JacobGabrielson/eltainer" :rev :newest)
   :commands (eltainer docker k8s))
 ```
+
+(`magit-section` + `transient` are on MELPA; `eat` is on NonGNU
+ELPA.  Both archives are added above.  `package-vc` pulls each
+dep on first install.)
 
 `:rev :newest` follows the default branch.  Pin to a specific
 tag or SHA with `:rev "v1.0.0"` if you'd rather track a release.

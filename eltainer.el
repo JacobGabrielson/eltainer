@@ -1,4 +1,20 @@
 ;;; eltainer.el --- Unified container porcelain for Emacs -*- lexical-binding: t -*-
+
+;; Author: Jacob Gabrielson <jacobg23@pobox.com>
+;; Maintainer: Jacob Gabrielson <jacobg23@pobox.com>
+;; URL: https://github.com/JacobGabrielson/eltainer
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "30.1") (magit-section "4.0.0") (transient "0.7.0") (eat "0.9.4"))
+;; Keywords: docker, kubernetes, tools, convenience
+
+;; This file is not part of GNU Emacs.
+
+;;; Commentary:
+
+;; Pure-Elisp porcelain for Docker and Kubernetes, fronted by a single
+;; magit-style dashboard.  Talks HTTP/1.1 to the Docker daemon over its
+;; Unix socket and HTTPS to the Kubernetes API server — no `docker' or
+;; `kubectl' CLI shell-outs in the hot path.
 ;;
 ;; Adds `docker/' and `k8s/' to the load-path and requires both halves
 ;; so `M-x docker', `M-x k8s', and `M-x eltainer' are all available
@@ -7,6 +23,11 @@
 ;; `M-x eltainer' opens a magit-section dashboard listing every
 ;; available view in both backends.  Press the key beside an entry —
 ;; or `RET' / mouse-1 on the row — to jump in.
+;;
+;; See the project README for the full user guide, key tables, and
+;; architecture notes.
+
+;;; Code:
 
 (require 'cl-lib)
 (require 'magit-section)
