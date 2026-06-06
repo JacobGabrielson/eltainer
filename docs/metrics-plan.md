@@ -269,7 +269,7 @@ suffix:
 ```
 
 So `?` becomes genuinely contextual — the same magit muscle memory
-the project already commits to (see AGENT.md).  The plain keybindings
+the project already commits to (see CLAUDE.md).  The plain keybindings
 (`l`, `e`, `M`, …) stay bound globally in the view for users who skip
 the menu; they keep their own at-point guards.
 

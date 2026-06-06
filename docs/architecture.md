@@ -446,7 +446,7 @@ the views stop being stale until you press `g`.
    daemon switches the connection to raw byte streaming after a
    `101 Switching Protocols` or after the request completes for
    `/exec/{id}/start`).
-2. Add `docker-exec.el` (AGENT.md's missing Phase 2 step 7).
+2. Add `docker-exec.el` (the container exec view).
 3. Add `docker-attach.el` if there's appetite.
 
 ### Phase 5 — registry (pull, push)
@@ -461,7 +461,7 @@ the views stop being stale until you press `g`.
 1. Delete `docker-command` / `docker-json-command` / `docker-ndjson-command`
    / `docker-async-command` / the TLS-flag helper.
 2. Delete `docker-daemon.el` (subsumed long ago).
-3. Update AGENT.md: remove the "shell out only to docker products" rule
+3. Update CLAUDE.md: remove the "shell out only to docker products" rule
    and document the new "we are a Docker daemon HTTP client" rule. The
    one remaining shell-out is to credential helpers (which we frame
    as an OS-level secrets concern, not a Docker concern).

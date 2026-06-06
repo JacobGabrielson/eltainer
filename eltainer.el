@@ -30,6 +30,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'filenotify)
 (require 'magit-section)
 (require 'eltainer-ui)
 
@@ -129,33 +130,80 @@ switch targets in the dashboard."
 
 (defvar eltainer--discover-files-cache nil
   "Memoized result of `eltainer--discover-kubeconfig-files'.
-Plist (:key KEY :files LIST).  KEY captures the scan inputs that
-can change file membership — KUBECONFIG env, the extra-paths list,
-and an alist of (DIR . MTIME) for every readable search dir — so
-adding or removing a kubeconfig invalidates the cache automatically.")
+Plist (:key KEY :files LIST).  KEY captures only the scan inputs the
+cache must track itself — the KUBECONFIG env var and the extra-paths
+list.  Files being added to or removed from the search dirs are noticed
+instead by the `file-notify' watches in `eltainer--discover-watches',
+whose callback nils this cache so the next dashboard refresh re-globs.")
 
-(defun eltainer--discover-scan-key ()
-  "Return the cache key for `eltainer--discover-kubeconfig-files'."
-  (list (getenv "KUBECONFIG")
-        eltainer-kubeconfig-extra-paths
-        (cl-loop for dir in eltainer-kubeconfig-search-dirs
-                 for expanded = (expand-file-name dir)
-                 when (file-directory-p expanded)
-                 collect (cons expanded
-                               (file-attribute-modification-time
-                                (file-attributes expanded))))))
+(defvar eltainer--discover-watches nil
+  "Alist of (DIR . DESCRIPTOR) `file-notify' watches on the search dirs.
+Reconciled against the currently-existing `eltainer-kubeconfig-search-dirs'
+by `eltainer--discover-sync-watches' on each discovery run, so a search
+dir created later starts being watched the next time the dashboard is
+refreshed.  A `defvar' (genuine runtime state) so `eltainer-reload' keeps
+the existing watches rather than re-adding them — sync reconciles, so it
+neither leaks descriptors nor double-watches a dir.")
+
+(defun eltainer--discover-invalidate (&optional _event)
+  "Drop the kubeconfig discovery cache.
+The `file-notify' callback for the search-dir watches: when a kubeconfig
+is added, removed, or rewritten under a watched dir, the next
+`eltainer--discover-kubeconfig-files' re-globs from scratch."
+  (setq eltainer--discover-files-cache nil))
+
+(defun eltainer--discover-sync-watches ()
+  "Make `eltainer--discover-watches' match the existing search dirs.
+Adds a `file-notify' watch for each existing
+`eltainer-kubeconfig-search-dirs' entry not yet watched, and drops
+watches for dirs that vanished or left the list.  Returns non-nil when
+the watch set changed — a dir appeared or disappeared since the last
+scan, so the discovery cache is stale and the caller should re-glob.
+
+A dir that cannot be watched (no `file-notify' support, or the inotify
+watch limit is reached) is simply left unwatched and re-tried on the
+next run; discovery still works, it just falls back to re-globbing each
+refresh for that dir instead of being event-driven."
+  (let ((want (cl-loop for dir in eltainer-kubeconfig-search-dirs
+                       for expanded = (expand-file-name dir)
+                       when (file-directory-p expanded)
+                       collect expanded))
+        (changed nil))
+    ;; Drop watches whose dir is gone or no longer configured.
+    (dolist (entry eltainer--discover-watches)
+      (unless (member (car entry) want)
+        (ignore-errors (file-notify-rm-watch (cdr entry)))
+        (setq changed t)))
+    (setq eltainer--discover-watches
+          (cl-remove-if-not (lambda (e) (member (car e) want))
+                            eltainer--discover-watches))
+    ;; Add watches for dirs we are not yet watching.  A dir we had not
+    ;; seen before is itself a change worth a re-glob, whether or not the
+    ;; watch takes (if it doesn't, it stays absent and is re-tried next
+    ;; run — that degrades to re-globbing every refresh, never staleness).
+    (dolist (dir want)
+      (unless (assoc dir eltainer--discover-watches)
+        (let ((desc (ignore-errors
+                      (file-notify-add-watch
+                       dir '(change) #'eltainer--discover-invalidate))))
+          (when desc
+            (push (cons dir desc) eltainer--discover-watches)))
+        (setq changed t)))
+    changed))
 
 (defun eltainer--discover-kubeconfig-files ()
   "Return de-duplicated kubeconfig file paths from all known sources.
 Sources, in order: `$KUBECONFIG' (colon-separated), files in
 `eltainer-kubeconfig-search-dirs', and `eltainer-kubeconfig-extra-paths'.
 
-Memoized: dashboard refreshes don't re-glob the scan dirs unless
-something in `eltainer--discover-scan-key' actually changed
-\(env, extra-paths, or a search dir's mtime — which moves whenever
-a file in it is added or removed)."
-  (let ((key (eltainer--discover-scan-key)))
-    (if (equal key (plist-get eltainer--discover-files-cache :key))
+Memoized: dashboard refreshes don't re-glob the scan dirs unless the
+KUBECONFIG env or extra-paths changed, or a `file-notify' watch fired
+because a file under a search dir was added, removed, or rewritten."
+  (when (eltainer--discover-sync-watches)
+    (setq eltainer--discover-files-cache nil))
+  (let ((key (list (getenv "KUBECONFIG") eltainer-kubeconfig-extra-paths)))
+    (if (and eltainer--discover-files-cache
+             (equal key (plist-get eltainer--discover-files-cache :key)))
         (plist-get eltainer--discover-files-cache :files)
       (let* ((env (getenv "KUBECONFIG"))
              (env-paths (and env (split-string env ":" t)))
