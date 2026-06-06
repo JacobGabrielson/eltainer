@@ -78,6 +78,82 @@ come *before* implementation rather than *after* mistakes.
 
 The remaining sections are eltainer-specific working notes.
 
+## What eltainer is
+
+A pure Emacs Lisp, magit-style browser for Docker and Kubernetes.
+All parsing, UI rendering, and business logic is Elisp; the only
+runtime dependencies are a handful of Emacs packages (see
+`Package-Requires:` in `eltainer.el` and the README `Requirements`
+block).  The user is an expert Elisp developer — keep responses
+concise.
+
+## UI conventions — magit by default
+
+The UI must behave like magit: section-based buffers, transient
+dispatch menus, single-letter actions, `n`/`p`/`TAB` navigation, `g`
+to refresh, `q` to quit, `b` for switch-like actions.  When in doubt,
+do what magit does.  Deviate only when the Docker / Kubernetes domain
+has no magit-equivalent concept — and call any such deviation out in
+the diff (and here, if it'd surprise a contributor).
+
+- All views derive from `magit-section-mode`.
+- Buffer names: `*docker:<view>*` / `*k8s:<view>*`; log buffers
+  `*docker:logs:<container>*`.
+- Use `completing-read` for resource selection and `transient` for
+  action menus.
+- The full per-view key tables live in `README.md` — keep them there
+  (see README hygiene below), not duplicated here.
+
+## Core constraints
+
+- **Pure Elisp only.**  Every line of production code is Emacs Lisp.
+- **Talk to the daemon directly over HTTP.**  Both the Docker daemon
+  and the Kubernetes API server are reached via `docker-http` (Unix
+  socket / TCP / TCP+TLS via built-in GnuTLS).  No `docker` CLI and
+  no `kubectl` in production paths.  See `docs/architecture.md`.
+- **Native JSON only.**  `json-parse-string` / `json-parse-buffer`
+  and `json-serialize`; refuse to load on an Emacs without them.
+- **Narrowly-scoped exceptions**, each in a clearly-named helper:
+  - Docker: build / buildx (BuildKit gRPC), `docker compose`, CLI
+    plugins, `docker login` config writes, `DOCKER_HOST=ssh://…`
+    transport, `docker-credential-*` helpers.
+  - K8s: `users.exec` credential plugins (`aws eks get-token`,
+    `gke-gcloud-auth-plugin`, …).
+  Test scaffolding may shell out for sentinel containers; production
+  code never does.
+- **Target Emacs 30+.**
+
+## Code style
+
+- Always `lexical-binding: t` in the file header.
+- Use `cl-lib` (`cl-defstruct`, `cl-loop`, …) — ships with Emacs.
+- Public symbols are prefixed by their module (`docker-…`, `k8s-…`,
+  `eltainer-…`); internal/private symbols use the double-dash form
+  (`docker--…`).
+- `defcustom` for user-facing configuration; `defvar` vs `defconst`
+  for state vs. reloadable data per the rule further below.
+
+## Watch files, don't poll them
+
+When eltainer needs to react to a file or directory changing on disk
+— a kubeconfig appearing, a config being rewritten — use Emacs's
+`filenotify` (`file-notify-add-watch`) to get an event, rather than
+re-`stat`-ing on a timer or re-globbing the filesystem on every
+refresh.  The kubeconfig discovery in `eltainer.el`
+(`eltainer--discover-sync-watches`) is the reference pattern: watch
+the search dirs, nil the cache in the callback, reconcile the watch
+set on each discovery run, and degrade gracefully (re-glob) when a
+watch can't be established.
+
+One deliberate exception worth understanding: `k8s-config-load`'s
+parse cache stays keyed on the file's mtime rather than a watch.  A
+single `file-attributes` stat on access is cheaper than maintaining a
+per-file watch, and an mtime key survives the atomic-rename-on-save
+that most editors do — which would otherwise strand a `file-notify`
+watch on the old inode.  So: reach for `filenotify` for
+*directory*-level "did something appear or vanish" detection; a cheap
+mtime key is fine for "has this one file I'm about to read changed."
+
 ## Scratch files: use `./tmp/`, not `/tmp/`
 
 This repo has a `tmp/` dir at the top level (gitignored).  Put all
